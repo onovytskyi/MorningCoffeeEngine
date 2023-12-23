@@ -109,6 +109,8 @@ BOOL CreateEditorWindow(int nCmdShow)
 {
 	int width = CW_USEDEFAULT;
 	int height = 0;
+	int windowx = CW_USEDEFAULT;
+	int windowy = 0;
 	bool fullscreen = false;
 	bool borderless = false;
 
@@ -119,6 +121,8 @@ BOOL CreateEditorWindow(int nCmdShow)
 		{
 			width = editor.config.GetInt("width");
 			height = editor.config.GetInt("height");
+			windowx = editor.config.GetInt("windowx");
+			windowy = editor.config.GetInt("windowy");
 		}
 		fullscreen = editor.config.GetBool("fullscreen");
 		borderless = editor.config.GetBool("borderless");
@@ -139,7 +143,7 @@ BOOL CreateEditorWindow(int nCmdShow)
 			szWindowClass,
 			szTitle,
 			WS_POPUP,
-			CW_USEDEFAULT, 0, width, height,
+			windowx, windowy, width, height,
 			NULL,
 			NULL,
 			hInst,
@@ -152,7 +156,7 @@ BOOL CreateEditorWindow(int nCmdShow)
 			szWindowClass,
 			szTitle,
 			WS_OVERLAPPEDWINDOW,
-			CW_USEDEFAULT, 0, width, height,
+			windowx, windowy, width, height,
 			NULL,
 			NULL,
 			hInst,
@@ -184,6 +188,16 @@ BOOL CreateEditorWindow(int nCmdShow)
 	DragAcceptFiles(hWnd, TRUE);
 
 	return TRUE;
+}
+
+void SaveWindowRectInConfig(wi::platform::window_type window)
+{
+	RECT rect;
+	::GetWindowRect(window, &rect);
+	editor.config.Set("width", static_cast<int>(rect.right - rect.left));
+	editor.config.Set("height", static_cast<int>(rect.bottom - rect.top));
+	editor.config.Set("windowx", static_cast<int>(rect.left));
+	editor.config.Set("windowy", static_cast<int>(rect.top));
 }
 
 //
@@ -237,8 +251,17 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 	case WM_SIZE:
 	case WM_DPICHANGED:
 		if(editor.is_window_active && LOWORD(lParam) > 0 && HIWORD(lParam) > 0)
+		{
 			editor.SetWindow(hWnd);
+			SaveWindowRectInConfig(hWnd);
+		}
 	    break;
+    case WM_MOVE:
+		if(editor.is_window_active)
+		{
+			SaveWindowRectInConfig(hWnd);
+		}
+		break;
 	case WM_CHAR:
 		switch (wParam)
 		{
