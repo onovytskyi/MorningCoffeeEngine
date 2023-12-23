@@ -2394,7 +2394,7 @@ namespace wi::gui
 		}
 		font.params.posY = translation.y + sprites[state].params.siz.y * 0.5f;
 
-		selected = std::min((int)items.size(), selected);
+		selected = std::min(static_cast<int>(items.size() - 1), selected);
 
 		if (selected >= 0)
 		{
