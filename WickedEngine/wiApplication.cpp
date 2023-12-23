@@ -225,6 +225,11 @@ namespace wi
 		bool colorspace_conversion_required = colorspace == ColorSpace::HDR10_ST2084;
 		if (colorspace_conversion_required)
 		{
+			if (rendertarget.GetDesc().width != swapChain.desc.width || rendertarget.GetDesc().height != swapChain.desc.height)
+			{
+				rendertarget = {};
+			}
+
 			// In HDR10, we perform the compositing in a custom linear color space render target
 			if (!rendertarget.IsValid())
 			{
