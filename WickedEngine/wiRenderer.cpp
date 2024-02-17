@@ -693,6 +693,8 @@ bool LoadShader(
 		input.include_directories.push_back(sourcedir + wi::helper::GetDirectoryFromPath(filename));
 		input.shadersourcefilename = wi::helper::ReplaceExtension(sourcedir + filename, "hlsl");
 
+		input.flags |= wi::shadercompiler::Flags::GENERATE_DEBUG_SYMBOLS;
+
 		wi::shadercompiler::CompilerOutput output;
 		wi::shadercompiler::Compile(input, output);
 

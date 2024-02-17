@@ -98,6 +98,12 @@ namespace wi::shadercompiler
 		return internal_state;
 	}
 
+	struct CompiledBlobs
+	{
+		CComPtr<IDxcBlob> shaderBlob;
+		CComPtr<IDxcBlob> pdbBlob;
+	};
+
 	void Compile_DXCompiler(const CompilerInput& input, CompilerOutput& output)
 	{
 		InternalState_DXC& compiler_internal = input.format == ShaderFormat::HLSL6_XS ? dxc_compiler_xs() : dxc_compiler();
@@ -141,7 +147,12 @@ namespace wi::shadercompiler
 
 		if (has_flag(input.flags, Flags::DISABLE_OPTIMIZATION))
 		{
-			args.push_back(L"-Od");
+			args.push_back(DXC_ARG_SKIP_OPTIMIZATIONS);
+		}
+
+		if (has_flag(input.flags, Flags::GENERATE_DEBUG_SYMBOLS))
+		{
+			args.push_back(DXC_ARG_DEBUG);
 		}
 
 		switch (input.format)
@@ -502,6 +513,8 @@ namespace wi::shadercompiler
 			return;
 		}
 
+		std::shared_ptr<CompiledBlobs> internal_state;
+
 		CComPtr<IDxcBlob> pShader = nullptr;
 		hr = pResults->GetOutput(DXC_OUT_OBJECT, IID_PPV_ARGS(&pShader), nullptr);
 		assert(SUCCEEDED(hr));
@@ -512,9 +525,23 @@ namespace wi::shadercompiler
 			output.shadersize = pShader->GetBufferSize();
 
 			// keep the blob alive == keep shader pointer valid!
-			auto internal_state = std::make_shared<CComPtr<IDxcBlob>>();
-			*internal_state = pShader;
+			internal_state = std::make_shared<CompiledBlobs>();
+			internal_state->shaderBlob = pShader;
 			output.internal_state = internal_state;
+		}
+
+		CComPtr<IDxcBlob> pPDB = nullptr;
+		CComPtr<IDxcBlobWide> pPDBName;
+		hr = pResults->GetOutput(DXC_OUT_PDB, IID_PPV_ARGS(&pPDB), pPDBName.ReleaseAndGetAddressOf());
+		if (SUCCEEDED(hr) && pPDB != nullptr)
+		{
+			output.pdbdata = (const uint8_t*)pPDB->GetBufferPointer();
+			output.pdbsize = pPDB->GetBufferSize();
+			output.pdbName = pPDBName->GetStringPointer();
+
+			// keep the blob alive == keep shader pointer valid!
+			assert(internal_state);
+			internal_state->pdbBlob = pPDB;
 		}
 
 		if (input.format == ShaderFormat::HLSL6)
@@ -744,6 +771,18 @@ namespace wi::shadercompiler
 				wi::helper::MakePathRelative(rootdir, x);
 			}
 			dependencyLibrary << dependencies;
+		}
+
+		if (output.pdbsize != 0)
+		{
+			std::string pdbDirectoryPath = wi::helper::GetDirectoryFromPath(shaderfilename);
+			std::string pdbFileName;
+			wi::helper::StringConvert(output.pdbName, pdbFileName);
+			std::string pdbFilePath = pdbDirectoryPath + pdbFileName;
+			if (!wi::helper::FileWrite(pdbFilePath, output.pdbdata, output.pdbsize))
+			{
+				wi::backlog::post("Unable to write " + pdbFilePath, wi::backlog::LogLevel::Warning);
+			}
 		}
 
 		if (wi::helper::FileWrite(shaderfilename, output.shaderdata, output.shadersize))

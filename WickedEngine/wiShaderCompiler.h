@@ -12,6 +12,7 @@ namespace wi::shadercompiler
 		NONE = 0,
 		DISABLE_OPTIMIZATION = 1 << 0,
 		STRIP_REFLECTION = 1 << 1,
+		GENERATE_DEBUG_SYMBOLS = 1 << 2,
 	};
 	struct CompilerInput
 	{
@@ -36,6 +37,11 @@ namespace wi::shadercompiler
 		wi::vector<uint8_t> shaderhash;
 		std::string error_message;
 		wi::vector<std::string> dependencies;
+
+		const uint8_t* pdbdata = nullptr;
+		size_t pdbsize = 0;
+
+		std::wstring pdbName;
 	};
 	void Compile(const CompilerInput& input, CompilerOutput& output);
 
