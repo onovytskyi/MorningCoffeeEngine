@@ -17,7 +17,6 @@
 #include "wiEventHandler.h"
 #include "wiPlatform.h"
 #include "wiSheenLUT.h"
-#include "wiShaderCompiler.h"
 #include "wiTimer.h"
 #include "wiUnorderedMap.h" // leave it here for shader dump!
 #include "wiFont.h"
@@ -80,6 +79,8 @@ std::string SHADERSOURCEPATH = "../WickedEngine/shaders/";
 std::string SHADERPATH = wi::helper::GetCurrentPath() + "/shaders/";
 std::string SHADERSOURCEPATH = wi::helper::GetCurrentPath() + "/../WickedEngine/shaders/";
 #endif // SHADERDUMP_ENABLED
+
+wi::shadercompiler::Flags SHADERFLAGS = wi::shadercompiler::Flags::NONE;
 
 // define this to use raytracing pipeline for raytraced reflections:
 //	Currently the DX12 device could crash for unknown reasons with the global root signature export
@@ -693,7 +694,7 @@ bool LoadShader(
 		input.include_directories.push_back(sourcedir + wi::helper::GetDirectoryFromPath(filename));
 		input.shadersourcefilename = wi::helper::ReplaceExtension(sourcedir + filename, "hlsl");
 
-		input.flags |= wi::shadercompiler::Flags::GENERATE_DEBUG_SYMBOLS;
+		input.flags = GetShaderFlags();
 
 		wi::shadercompiler::CompilerOutput output;
 		wi::shadercompiler::Compile(input, output);
@@ -2421,6 +2422,14 @@ const std::string& GetShaderSourcePath()
 void SetShaderSourcePath(const std::string& path)
 {
 	SHADERSOURCEPATH = path;
+}
+wi::shadercompiler::Flags GetShaderFlags()
+{
+	return SHADERFLAGS;
+}
+void SetShaderFlags(wi::shadercompiler::Flags flags)
+{
+	SHADERFLAGS = flags;
 }
 void ReloadShaders()
 {

@@ -569,6 +569,11 @@ namespace wi
 				preference = GPUPreference::Integrated;
 			}
 
+			if (!wi::arguments::HasArgument("disable_pdb"))
+			{
+				wi::renderer::SetShaderFlags(wi::shadercompiler::Flags::GENERATE_DEBUG_SYMBOLS);
+			}
+
 #ifdef PLATFORM_PS5
 			wi::renderer::SetShaderPath(wi::renderer::GetShaderPath() + "ps5/");
 			graphicsDevice = std::make_unique<GraphicsDevice_PS5>(validationMode);
