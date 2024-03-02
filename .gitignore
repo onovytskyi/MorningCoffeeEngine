@@ -228,3 +228,6 @@ wiShaderdump.h
 *.a
 *.elf
 *.prx
+
+#VS plugin: Smart Command Line Arguments
+*.args.json
