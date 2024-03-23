@@ -231,3 +231,4 @@ wiShaderdump.h
 
 #VS plugin: Smart Command Line Arguments
 *.args.json
+Editor/config.ini
