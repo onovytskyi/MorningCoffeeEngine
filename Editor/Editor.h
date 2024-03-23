@@ -4,6 +4,7 @@
 #include "OptionsWindow.h"
 #include "ComponentsWindow.h"
 #include "ProfilerWindow.h"
+#include "ContentBrowserWindow.h"
 #include "IconDefinitions.h"
 
 class EditorLoadingScreen : public wi::LoadingScreen
@@ -35,11 +36,18 @@ public:
 	bool dummy_male = false;
 	XMFLOAT3 dummy_pos = XMFLOAT3(0, 0, 0);
 
+	wi::gui::Button navtestButton;
+	bool navtest_enabled = false;
+	wi::scene::PickResult navtest_start_pick;
+	wi::scene::PickResult navtest_goal_pick;
+	wi::PathQuery navtest_pathquery;
+
 	wi::gui::Button playButton;
 	wi::gui::Button stopButton;
 
 	wi::gui::Button saveButton;
 	wi::gui::Button openButton;
+	wi::gui::Button contentBrowserButton;
 	wi::gui::Button logButton;
 	wi::gui::Button profilerButton;
 	wi::gui::Button cinemaButton;
@@ -53,7 +61,9 @@ public:
 	OptionsWindow optionsWnd;
 	ComponentsWindow componentsWnd;
 	ProfilerWindow profilerWnd;
+	ContentBrowserWindow contentBrowserWnd;
 
+	wi::primitive::Ray pickRay;
 	wi::physics::PickDragOperation physicsDragOp;
 
 	std::unique_ptr<wi::RenderPath3D> renderPath;
@@ -129,6 +139,10 @@ public:
 	wi::Archive& AdvanceHistory();
 	void ConsumeHistoryOperation(bool undo);
 
+	wi::vector<std::string> recentFilenames;
+	size_t maxRecentFilenames = 10;
+	void RegisterRecentlyUsed(const std::string& filename);
+
 	void Open(const std::string& filename);
 	void Save(const std::string& filename);
 	void SaveAs();
@@ -202,6 +216,7 @@ enum class EditorLocalization
 	// Top menu:
 	Save,
 	Open,
+	ContentBrowser,
 	Backlog,
 	Profiler,
 	Cinema,
@@ -220,6 +235,7 @@ static const char* EditorLocalizationStrings[] = {
 	// Top menu:
 	"Save",
 	"Open",
+	"Content",
 	"Backlog",
 	"Profiler",
 	"Cinema",

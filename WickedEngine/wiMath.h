@@ -7,7 +7,7 @@
 
 #if __has_include("DirectXMath.h")
 // In this case, DirectXMath is coming from Windows SDK.
-//	It is better to use this on Windows as some Windows libraries could depend on the same 
+//	It is better to use this on Windows as some Windows libraries could depend on the same
 //	DirectXMath headers
 #include <DirectXMath.h>
 #include <DirectXPackedVector.h>
@@ -29,8 +29,8 @@ using namespace DirectX::PackedVector;
 
 namespace wi::math
 {
-	static constexpr XMFLOAT4X4 IDENTITY_MATRIX = XMFLOAT4X4(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1);
-	static constexpr float PI = XM_PI;
+	inline constexpr XMFLOAT4X4 IDENTITY_MATRIX = XMFLOAT4X4(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1);
+	inline constexpr float PI = XM_PI;
 
 	inline bool float_equal(float f1, float f2) {
 		return (std::abs(f1 - f2) <= std::numeric_limits<float>::epsilon() * std::max(std::abs(f1), std::abs(f2)));
@@ -274,6 +274,46 @@ namespace wi::math
 		return ++x;
 	}
 
+	// A uniform 2D random generator for hemisphere sampling: http://holger.dammertz.org/stuff/notes_HammersleyOnHemisphere.html
+	//	idx	: iteration index
+	//	num	: number of iterations in total
+	constexpr XMFLOAT2 Hammersley2D(uint32_t idx, uint32_t num) {
+		uint32_t bits = idx;
+		bits = (bits << 16u) | (bits >> 16u);
+		bits = ((bits & 0x55555555u) << 1u) | ((bits & 0xAAAAAAAAu) >> 1u);
+		bits = ((bits & 0x33333333u) << 2u) | ((bits & 0xCCCCCCCCu) >> 2u);
+		bits = ((bits & 0x0F0F0F0Fu) << 4u) | ((bits & 0xF0F0F0F0u) >> 4u);
+		bits = ((bits & 0x00FF00FFu) << 8u) | ((bits & 0xFF00FF00u) >> 8u);
+		const float radicalInverse_VdC = float(bits) * 2.3283064365386963e-10f; // / 0x100000000
+
+		return XMFLOAT2(float(idx) / float(num), radicalInverse_VdC);
+	}
+	inline XMMATRIX GetTangentSpace(const XMFLOAT3& N)
+	{
+		// Choose a helper vector for the cross product
+		XMVECTOR helper = std::abs(N.x) > 0.99 ? XMVectorSet(0, 0, 1, 0) : XMVectorSet(1, 0, 0, 0);
+
+		// Generate vectors
+		XMVECTOR normal = XMLoadFloat3(&N);
+		XMVECTOR tangent = XMVector3Normalize(XMVector3Cross(normal, helper));
+		XMVECTOR binormal = XMVector3Normalize(XMVector3Cross(normal, tangent));
+		return XMMATRIX(tangent, binormal, normal, XMVectorSet(0,0,0,1));
+	}
+	inline XMFLOAT3 HemispherePoint_Uniform(float u, float v)
+	{
+		float phi = v * 2 * PI;
+		float cosTheta = 1 - u;
+		float sinTheta = std::sqrt(1 - cosTheta * cosTheta);
+		return XMFLOAT3(std::cos(phi) * sinTheta, std::sin(phi) * sinTheta, cosTheta);
+	}
+	inline XMFLOAT3 HemispherePoint_Cos(float u, float v)
+	{
+		float phi = v * 2 * PI;
+		float cosTheta = std::sqrt(1 - u);
+		float sinTheta = std::sqrt(1 - cosTheta * cosTheta);
+		return XMFLOAT3(std::cos(phi) * sinTheta, std::sin(phi) * sinTheta, cosTheta);
+	}
+
 	// A, B, C: trangle vertices
 	float TriangleArea(const XMVECTOR& A, const XMVECTOR& B, const XMVECTOR& C);
 	// a, b, c: trangle side lengths
@@ -308,6 +348,32 @@ namespace wi::math
 		return XMVector3TransformNormal(param, M);
 	}
 
+	// Centripetal Catmull-Rom avoids self intersections that can appear with XMVectorCatmullRom
+	//	But it doesn't support the case when p0 == p1 or p2 == p3!
+	//	This also supports tension to control curve smoothness
+	//	Note: Catmull-Rom interpolates between p1 and p2 by value of t
+	inline XMVECTOR XM_CALLCONV CatmullRomCentripetal(XMVECTOR p0, XMVECTOR p1, XMVECTOR p2, XMVECTOR p3, float t, float tension = 0.5f)
+	{
+		float alpha = 1.0f - tension;
+		float t0 = 0.0f;
+		float t1 = t0 + std::pow(DistanceEstimated(p0, p1), alpha);
+		float t2 = t1 + std::pow(DistanceEstimated(p1, p2), alpha);
+		float t3 = t2 + std::pow(DistanceEstimated(p2, p3), alpha);
+		t = Lerp(t1, t2, t);
+		float t1t0 = 1.0f / std::max(0.001f, t1 - t0);
+		float t2t1 = 1.0f / std::max(0.001f, t2 - t1);
+		float t3t2 = 1.0f / std::max(0.001f, t3 - t2);
+		float t2t0 = 1.0f / std::max(0.001f, t2 - t0);
+		float t3t1 = 1.0f / std::max(0.001f, t3 - t1);
+		XMVECTOR A1 = (t1 - t) * t1t0 * p0 + (t - t0) * t1t0 * p1;
+		XMVECTOR A2 = (t2 - t) * t2t1 * p1 + (t - t1) * t2t1 * p2;
+		XMVECTOR A3 = (t3 - t) * t3t2 * p2 + (t - t2) * t3t2 * p3;
+		XMVECTOR B1 = (t2 - t) * t2t0 * A1 + (t - t0) * t2t0 * A2;
+		XMVECTOR B2 = (t3 - t) * t3t1 * A2 + (t - t1) * t3t1 * A3;
+		XMVECTOR C = (t2 - t) * t2t1 * B1 + (t - t1) * t2t1 * B2;
+		return C;
+	}
+
 	XMFLOAT3 QuaternionToRollPitchYaw(const XMFLOAT4& quaternion);
 
 	XMVECTOR GetClosestPointToLine(const XMVECTOR& A, const XMVECTOR& B, const XMVECTOR& P, bool segmentClamp = false);
@@ -326,6 +392,19 @@ namespace wi::math
 	float GetAngle(XMVECTOR A, XMVECTOR B, XMVECTOR axis, float max = XM_2PI);
 	void ConstructTriangleEquilateral(float radius, XMFLOAT4& A, XMFLOAT4& B, XMFLOAT4& C);
 	void GetBarycentric(const XMVECTOR& p, const XMVECTOR& a, const XMVECTOR& b, const XMVECTOR& c, float &u, float &v, float &w, bool clamp = false);
+
+	inline XMFLOAT3 GetForward(const XMFLOAT4X4& _m)
+	{
+		return XMFLOAT3(_m.m[2][0], _m.m[2][1], _m.m[2][2]);
+	}
+	inline XMFLOAT3 GetUp(const XMFLOAT4X4& _m)
+	{
+		return XMFLOAT3(_m.m[1][0], _m.m[1][1], _m.m[1][2]);
+	}
+	inline XMFLOAT3 GetRight(const XMFLOAT4X4& _m)
+	{
+		return XMFLOAT3(_m.m[0][0], _m.m[0][1], _m.m[0][2]);
+	}
 
 	// Returns an element of a precomputed halton sequence. Specify which iteration to get with idx >= 0
 	const XMFLOAT4& GetHaltonSequence(int idx);
@@ -395,12 +474,12 @@ namespace wi::math
 
 
 	//-----------------------------------------------------------------------------
-	// Compute the intersection of a ray (Origin, Direction) with a triangle 
-	// (V0, V1, V2).  Return true if there is an intersection and also set *pDist 
+	// Compute the intersection of a ray (Origin, Direction) with a triangle
+	// (V0, V1, V2).  Return true if there is an intersection and also set *pDist
 	// to the distance along the ray to the intersection.
-	// 
-	// The algorithm is based on Moller, Tomas and Trumbore, "Fast, Minimum Storage 
-	// Ray-Triangle Intersection", Journal of Graphics Tools, vol. 2, no. 1, 
+	//
+	// The algorithm is based on Moller, Tomas and Trumbore, "Fast, Minimum Storage
+	// Ray-Triangle Intersection", Journal of Graphics Tools, vol. 2, no. 1,
 	// pp 21-28, 1997.
 	//
 	//	Modified for WickedEngine to return barycentrics and support TMin, TMax

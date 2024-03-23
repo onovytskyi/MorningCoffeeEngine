@@ -15,6 +15,8 @@ namespace wi::lua
 		lunamethod(Sprite_BindLua, GetTexture),
 		lunamethod(Sprite_BindLua, SetMaskTexture),
 		lunamethod(Sprite_BindLua, GetMaskTexture),
+		lunamethod(Sprite_BindLua, SetHidden),
+		lunamethod(Sprite_BindLua, IsHidden),
 
 		{ NULL, NULL }
 	};
@@ -118,6 +120,7 @@ namespace wi::lua
 			if (tex != nullptr)
 			{
 				sprite.maskResource = tex->resource;
+				sprite.params.setMaskMap(&tex->resource.GetTexture());
 			}
 		}
 		else
@@ -129,6 +132,22 @@ namespace wi::lua
 	int Sprite_BindLua::GetMaskTexture(lua_State* L)
 	{
 		Luna<Texture_BindLua>::push(L, sprite.maskResource);
+		return 1;
+	}
+	int Sprite_BindLua::SetHidden(lua_State* L)
+	{
+		int argc = wi::lua::SGetArgCount(L);
+		if (argc < 1)
+		{
+			wi::lua::SError(L, "SetHidden(bool value) not enough arguments!");
+			return 0;
+		}
+		sprite.SetHidden(wi::lua::SGetBool(L, 1));
+		return 0;
+	}
+	int Sprite_BindLua::IsHidden(lua_State* L)
+	{
+		wi::lua::SSetBool(L, sprite.IsHidden());
 		return 1;
 	}
 

@@ -134,6 +134,7 @@ wi::vector<ShaderEntry> shaders = {
 	{"emittedparticle_emitCS_volume", wi::graphics::ShaderStage::CS},
 	{"emittedparticle_finishUpdateCS", wi::graphics::ShaderStage::CS},
 	{"downsample4xCS", wi::graphics::ShaderStage::CS},
+	{"lineardepthCS", wi::graphics::ShaderStage::CS},
 	{"depthoffield_prepassCS_earlyexit", wi::graphics::ShaderStage::CS},
 	{"depthoffield_mainCS_cheap", wi::graphics::ShaderStage::CS},
 	{"depthoffield_mainCS_earlyexit", wi::graphics::ShaderStage::CS },
@@ -231,6 +232,7 @@ wi::vector<ShaderEntry> shaders = {
 	{"hairparticlePS", wi::graphics::ShaderStage::PS },
 	{"hairparticlePS_simple", wi::graphics::ShaderStage::PS },
 	{"hairparticlePS_prepass", wi::graphics::ShaderStage::PS },
+	{"hairparticlePS_prepass_depthonly", wi::graphics::ShaderStage::PS },
 	{"hairparticlePS_shadow", wi::graphics::ShaderStage::PS },
 	{"volumetricLight_SpotPS", wi::graphics::ShaderStage::PS },
 	{"volumetricLight_PointPS", wi::graphics::ShaderStage::PS },
@@ -256,11 +258,14 @@ wi::vector<ShaderEntry> shaders = {
 	{"objectPS_debug", wi::graphics::ShaderStage::PS },
 	{"objectPS_prepass", wi::graphics::ShaderStage::PS },
 	{"objectPS_prepass_alphatest", wi::graphics::ShaderStage::PS },
+	{"objectPS_prepass_depthonly", wi::graphics::ShaderStage::PS },
+	{"objectPS_prepass_depthonly_alphatest", wi::graphics::ShaderStage::PS },
 	{"lightVisualizerPS", wi::graphics::ShaderStage::PS },
 	{"lensFlarePS", wi::graphics::ShaderStage::PS },
 	{"impostorPS", wi::graphics::ShaderStage::PS },
 	{"impostorPS_simple", wi::graphics::ShaderStage::PS },
 	{"impostorPS_prepass", wi::graphics::ShaderStage::PS },
+	{"impostorPS_prepass_depthonly", wi::graphics::ShaderStage::PS },
 	{"forceFieldVisualizerPS", wi::graphics::ShaderStage::PS },
 	{"fontPS", wi::graphics::ShaderStage::PS },
 	{"envMap_skyPS_static", wi::graphics::ShaderStage::PS },
@@ -275,6 +280,7 @@ wi::vector<ShaderEntry> shaders = {
 	{"ddgi_debugPS", wi::graphics::ShaderStage::PS },
 	{"copyDepthPS", wi::graphics::ShaderStage::PS },
 	{"copyStencilBitPS", wi::graphics::ShaderStage::PS },
+	{"trailPS", wi::graphics::ShaderStage::PS },
 
 
 	{"hairparticleVS", wi::graphics::ShaderStage::VS },
@@ -330,6 +336,7 @@ wi::vector<ShaderEntry> shaders = {
 	{"shadowVS_transparent", wi::graphics::ShaderStage::VS },
 	{"shadowVS_transparent_emulation", wi::graphics::ShaderStage::VS },
 	{"screenVS", wi::graphics::ShaderStage::VS },
+	{"trailVS", wi::graphics::ShaderStage::VS },
 
 
 

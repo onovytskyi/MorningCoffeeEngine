@@ -146,6 +146,12 @@ set(HEADER_FILES
 		wiBVH.h
 		wiLocalization.h
 		wiVideo.h
+		wiVoxelGrid.h
+		wiPathQuery.h
+ 		wiVoxelGrid_BindLua.h
+  		wiPathQuery_BindLua.h
+		wiTrailRenderer.h
+		wiTrailRenderer_BindLua.h
 		)
 
 add_library(${TARGET_NAME} ${WICKED_LIBRARY_TYPE}
@@ -220,6 +226,12 @@ add_library(${TARGET_NAME} ${WICKED_LIBRARY_TYPE}
 	wiTerrain.cpp
 	wiLocalization.cpp
 	wiVideo.cpp
+	wiVoxelGrid.cpp
+	wiPathQuery.cpp
+ 	wiVoxelGrid_BindLua.cpp
+  	wiPathQuery_BindLua.cpp
+	wiTrailRenderer.cpp
+	wiTrailRenderer_BindLua.cpp
 	${HEADER_FILES}
 )
 add_library(WickedEngine ALIAS ${TARGET_NAME})
@@ -256,6 +268,19 @@ else ()
 	)
 	set(WICKEDENGINE_STATIC_LIBRARIES ${WICKEDENGINE_STATIC_LIBRARIES} FAudio)
 
+	if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+	target_compile_options(${TARGET_NAME} PRIVATE
+			-Wuninitialized
+			#-Wwrite-strings
+			#-Winit-self
+			#-Wreturn-type
+			#-Wreorder
+			#-Werror=delete-non-virtual-dtor
+			#-Werror
+			#uncomment this to stop the compilation at the first error
+			# -Wfatal-errors
+			)
+	elseif (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
 	# add some warnings and set them as errors
 	# read more details here: https://gcc.gnu.org/onlinedocs/gcc/Warning-Options.html
 	target_compile_options(${TARGET_NAME} PRIVATE
@@ -270,6 +295,7 @@ else ()
 			#uncomment this to stop the compilation at the first error
 			# -Wfatal-errors
 			)
+	endif()
 
 	target_link_libraries(${TARGET_NAME} PRIVATE dl)
 
@@ -284,13 +310,13 @@ endif()
 
 add_library(dxcompiler SHARED IMPORTED)
 set_property(TARGET dxcompiler PROPERTY
-		IMPORTED_LOCATION ${CMAKE_SOURCE_DIR}/WickedEngine/${LIBDXCOMPILER} )
+		IMPORTED_LOCATION ${WICKED_ROOT_DIR}/WickedEngine/${LIBDXCOMPILER} )
 
 # Copy the shader library next to the executable
 add_custom_command(
 		TARGET ${TARGET_NAME} POST_BUILD
-		COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/WickedEngine/${LIBDXCOMPILER} ${CMAKE_CURRENT_BINARY_DIR}
-		COMMAND ${CMAKE_COMMAND} -E create_symlink ${CMAKE_SOURCE_DIR}/WickedEngine/shaders ${CMAKE_CURRENT_BINARY_DIR}/shaders
+		COMMAND ${CMAKE_COMMAND} -E copy_if_different ${WICKED_ROOT_DIR}/WickedEngine/${LIBDXCOMPILER} ${CMAKE_CURRENT_BINARY_DIR}
+		COMMAND ${CMAKE_COMMAND} -E create_symlink ${WICKED_ROOT_DIR}/WickedEngine/shaders ${CMAKE_CURRENT_BINARY_DIR}/shaders
 )
 
 
@@ -305,7 +331,7 @@ target_link_libraries(offlineshadercompiler
 install(TARGETS offlineshadercompiler
 		RUNTIME DESTINATION "${CMAKE_INSTALL_LIBDIR}/WickedEngine")
 
-install(DIRECTORY "${CMAKE_SOURCE_DIR}/Content"
+install(DIRECTORY "${WICKED_ROOT_DIR}/Content"
 		DESTINATION "${CMAKE_INSTALL_LIBDIR}/WickedEngine")
 
 #### LOCAL FOLDER INSTALLATION
@@ -334,8 +360,8 @@ install(EXPORT Engine-Targets
 		NAMESPACE WickedEngine::
 		DESTINATION ${INSTALL_CONFIGDIR})
 
-set(_CONFIG_INSTALL_DIR_INCLUDE "${CMAKE_SOURCE_DIR}")
-set(_CONFIG_INSTALL_DIR_LIB "${CMAKE_SOURCE_DIR}")
+set(_CONFIG_INSTALL_DIR_INCLUDE "${WICKED_ROOT_DIR}")
+set(_CONFIG_INSTALL_DIR_LIB "${WICKED_ROOT_DIR}")
 configure_package_config_file(
 		${CMAKE_CURRENT_SOURCE_DIR}/WickedEngineConfig.cmake.in
 		${CMAKE_BINARY_DIR}/cmake/WickedEngineConfig.cmake

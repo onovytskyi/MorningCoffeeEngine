@@ -21,6 +21,9 @@
 #include "wiNetwork_BindLua.h"
 #include "wiPrimitive_BindLua.h"
 #include "wiPhysics_BindLua.h"
+#include "wiVoxelGrid_BindLua.h"
+#include "wiPathQuery_BindLua.h"
+#include "wiTrailRenderer_BindLua.h"
 #include "wiTimer.h"
 #include "wiVector.h"
 
@@ -201,6 +204,9 @@ namespace wi::lua
 		Network_BindLua::Bind();
 		primitive::Bind();
 		Physics_BindLua::Bind();
+		VoxelGrid_BindLua::Bind();
+		PathQuery_BindLua::Bind();
+		TrailRenderer_BindLua::Bind();
 
 		wi::backlog::post("wi::lua Initialized (" + std::to_string((int)std::round(timer.elapsed())) + " ms)");
 	}

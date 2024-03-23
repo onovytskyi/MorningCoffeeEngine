@@ -207,6 +207,9 @@ void PaintToolWindow::Create(EditorComponent* _editor)
 	textureSlotComboBox.AddItem("ClearcoatMap (R)", MaterialComponent::CLEARCOATMAP);
 	textureSlotComboBox.AddItem("ClearcoatRoughMap (R)", MaterialComponent::CLEARCOATROUGHNESSMAP);
 	textureSlotComboBox.AddItem("ClearcoatNormMap (R)", MaterialComponent::CLEARCOATNORMALMAP);
+	textureSlotComboBox.AddItem("SpecularMap (RGBA)", MaterialComponent::SPECULARMAP);
+	textureSlotComboBox.AddItem("AnisotropyMap (RG)", MaterialComponent::ANISOTROPYMAP);
+	textureSlotComboBox.AddItem("TransparencyMap (R)", MaterialComponent::TRANSPARENCYMAP);
 	textureSlotComboBox.SetSelected(0);
 	AddWidget(&textureSlotComboBox);
 
@@ -248,6 +251,13 @@ void PaintToolWindow::Create(EditorComponent* _editor)
 			if (wi::helper::saveTextureToMemoryFile(editTexture.texture, "PNG", texturefiledata))
 			{
 				material->textures[sel].resource.SetFileData(texturefiledata);
+				// Register into resource manager:
+				material->textures[sel].resource = wi::resourcemanager::Load(
+					material->textures[sel].name,
+					wi::resourcemanager::Flags::IMPORT_RETAIN_FILEDATA,
+					texturefiledata.data(),
+					texturefiledata.size()
+				);
 			}
 			else
 			{
@@ -476,12 +486,34 @@ void PaintToolWindow::Update(float dt)
 				if (mesh == nullptr || (mesh->vertex_uvset_0.empty() && mesh->vertex_uvset_1.empty()))
 					break;
 
-				MaterialComponent* material = selected.subsetIndex >= 0 && selected.subsetIndex < (int)mesh->subsets.size() ? scene.materials.GetComponent(mesh->subsets[selected.subsetIndex].materialID) : nullptr;
+				Entity materialID = mesh->subsets[selected.subsetIndex].materialID;
+				MaterialComponent* material = selected.subsetIndex >= 0 && selected.subsetIndex < (int)mesh->subsets.size() ? scene.materials.GetComponent(materialID) : nullptr;
 				if (material == nullptr)
 					break;
 
 				int uvset = 0;
 				TextureSlot editTexture = GetEditTextureSlot(*material, &uvset);
+
+				// Missing texture will be created a blank one:
+				if (!editTexture.texture.IsValid())
+				{
+					std::string texturename = "painttool/";
+					const NameComponent* materialname = scene.names.GetComponent(materialID);
+					if (materialname != nullptr)
+					{
+						texturename += materialname->name;
+						texturename += "_";
+					}
+					texturename += std::to_string(wi::random::GetRandom(std::numeric_limits<int>::max()));
+					texturename += ".PNG";
+					uint64_t sel = textureSlotComboBox.GetItemUserData(textureSlotComboBox.GetSelected());
+					material->textures[sel].name = texturename;
+					material->textures[sel].resource = wi::renderer::CreatePaintableTexture(1024, 1024, 1, wi::Color::White());
+					editTexture = GetEditTextureSlot(*material, &uvset);
+
+					wi::backlog::post("Paint Tool created default texture: " + texturename);
+				}
+
 				if (!editTexture.texture.IsValid())
 					break;
 				const TextureDesc& desc = editTexture.texture.GetDesc();
@@ -514,54 +546,32 @@ void PaintToolWindow::Update(float dt)
 					// Need to requery this because RecordHistory might swap textures on material:
 					editTexture = GetEditTextureSlot(*material, &uvset);
 
-					device->BindComputeShader(wi::renderer::GetShader(wi::enums::CSTYPE_PAINT_TEXTURE), cmd);
+					wi::renderer::PaintTextureParams paintparams = {};
 
+					paintparams.editTex = editTexture.texture;
 					if (brushTex.IsValid())
 					{
-						device->BindResource(&brushTex.GetTexture(), 0, cmd);
-					}
-					else
-					{
-						device->BindResource(wi::texturehelper::getWhite(), 0, cmd);
+						paintparams.brushTex = brushTex.GetTexture();
 					}
 					if (revealTex.IsValid())
 					{
-						device->BindResource(&revealTex.GetTexture(), 1, cmd);
+						paintparams.revealTex = revealTex.GetTexture();
 					}
-					else
-					{
-						device->BindResource(wi::texturehelper::getWhite(), 1, cmd);
-					}
-					device->BindUAV(&editTexture.texture, 0, cmd);
 
-					PaintTextureCB cb;
-					cb.xPaintBrushCenter = center;
-					cb.xPaintBrushRadius = (uint32_t)pressure_radius;
+					paintparams.push.xPaintBrushCenter = center;
+					paintparams.push.xPaintBrushRadius = (uint32_t)pressure_radius;
 					if (brushShapeComboBox.GetSelected() == 1)
 					{
-						cb.xPaintBrushRadius = (uint)std::ceil((float(cb.xPaintBrushRadius) * 2 / std::sqrt(2.0f))); // square shape, diagonal dispatch size
+						paintparams.push.xPaintBrushRadius = (uint)std::ceil((float(paintparams.push.xPaintBrushRadius) * 2 / std::sqrt(2.0f))); // square shape, diagonal dispatch size
 					}
-					cb.xPaintBrushAmount = amount;
-					cb.xPaintBrushSmoothness = smoothness;
-					cb.xPaintBrushColor = color.rgba;
-					cb.xPaintReveal = revealTex.IsValid() ? 1 : 0;
-					cb.xPaintBrushRotation = brush_rotation;
-					cb.xPaintBrushShape = (uint)brushShapeComboBox.GetSelected();
-					device->PushConstants(&cb, sizeof(cb), cmd);
+					paintparams.push.xPaintBrushAmount = amount;
+					paintparams.push.xPaintBrushSmoothness = smoothness;
+					paintparams.push.xPaintBrushColor = color.rgba;
+					paintparams.push.xPaintReveal = revealTex.IsValid() ? 1 : 0;
+					paintparams.push.xPaintBrushRotation = brush_rotation;
+					paintparams.push.xPaintBrushShape = (uint)brushShapeComboBox.GetSelected();
 
-					const uint diameter = cb.xPaintBrushRadius * 2;
-					const uint dispatch_dim = (diameter + PAINT_TEXTURE_BLOCKSIZE - 1) / PAINT_TEXTURE_BLOCKSIZE;
-					device->Dispatch(dispatch_dim, dispatch_dim, 1, cmd);
-
-					GPUBarrier barriers[] = {
-						GPUBarrier::Memory(),
-					};
-					device->Barrier(barriers, arraysize(barriers), cmd);
-
-					if (editTexture.texture.desc.mip_levels > 1)
-					{
-						wi::renderer::GenerateMipChain(editTexture.texture, wi::renderer::MIPGENFILTER::MIPGENFILTER_LINEAR, cmd);
-					}
+					wi::renderer::PaintIntoTexture(paintparams);
 				}
 				if(substep == substep_count - 1)
 				{

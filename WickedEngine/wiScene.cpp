@@ -767,6 +767,40 @@ namespace wi::scene
 			}
 		}
 
+		// VXGI volume update:
+		//	Note: this is using camera that the scene is associated with
+		{
+			VXGI::ClipMap& clipmap = vxgi.clipmaps[vxgi.clipmap_to_update];
+			clipmap.voxelsize = vxgi.clipmaps[0].voxelsize * (1u << vxgi.clipmap_to_update);
+			const float texelSize = clipmap.voxelsize * 2;
+			XMFLOAT3 center = XMFLOAT3(std::floor(camera.Eye.x / texelSize) * texelSize, std::floor(camera.Eye.y / texelSize) * texelSize, std::floor(camera.Eye.z / texelSize) * texelSize);
+			clipmap.offsetfromPrevFrame.x = int((clipmap.center.x - center.x) / texelSize);
+			clipmap.offsetfromPrevFrame.y = -int((clipmap.center.y - center.y) / texelSize);
+			clipmap.offsetfromPrevFrame.z = int((clipmap.center.z - center.z) / texelSize);
+			clipmap.center = center;
+			XMFLOAT3 extents = XMFLOAT3(vxgi.res * clipmap.voxelsize, vxgi.res * clipmap.voxelsize, vxgi.res * clipmap.voxelsize);
+			if (extents.x != clipmap.extents.x || extents.y != clipmap.extents.y || extents.z != clipmap.extents.z)
+			{
+				vxgi.pre_clear = true;
+			}
+			clipmap.extents = extents;
+		}
+
+		{
+			for (size_t voxelgridIndex = 0; voxelgridIndex < voxel_grids.GetCount(); ++voxelgridIndex)
+			{
+				wi::VoxelGrid& voxelgrid = voxel_grids[voxelgridIndex];
+				Entity entity = voxel_grids.GetEntity(voxelgridIndex);
+
+				const TransformComponent* transform = transforms.GetComponent(entity);
+				if (transform != nullptr)
+				{
+					voxelgrid.center = transform->GetPosition();
+					voxelgrid.set_voxelsize(transform->GetScale());
+				}
+			}
+		}
+
 		// Shader scene resources:
 		if (device->CheckCapability(GraphicsDeviceCapability::CACHE_COHERENT_UMA))
 		{
@@ -897,6 +931,17 @@ namespace wi::scene
 		surfelCellBuffer = {};
 
 		ddgi = {};
+
+		aabb_objects.clear();
+		aabb_lights.clear();
+		aabb_decals.clear();
+		aabb_probes.clear();
+
+		matrix_objects.clear();
+		matrix_objects_prev.clear();
+
+		collider_count_cpu = 0;
+		collider_count_gpu = 0;
 	}
 	void Scene::Merge(Scene& other)
 	{
@@ -911,6 +956,98 @@ namespace wi::scene
 		{
 			ddgi = std::move(other.ddgi);
 		}
+
+		aabb_objects.insert(aabb_objects.end(), other.aabb_objects.begin(), other.aabb_objects.end());
+		aabb_lights.insert(aabb_lights.end(), other.aabb_lights.begin(), other.aabb_lights.end());
+		aabb_decals.insert(aabb_decals.end(), other.aabb_decals.begin(), other.aabb_decals.end());
+		aabb_probes.insert(aabb_probes.end(), other.aabb_probes.begin(), other.aabb_probes.end());
+
+		matrix_objects.insert(matrix_objects.end(), other.matrix_objects.begin(), other.matrix_objects.end());
+		matrix_objects_prev.insert(matrix_objects_prev.end(), other.matrix_objects_prev.begin(), other.matrix_objects_prev.end());
+
+		// Recount colliders:
+		collider_allocator_cpu.store(0u);
+		collider_allocator_gpu.store(0u);
+		collider_deinterleaved_data.reserve(
+			sizeof(wi::primitive::AABB) * colliders.GetCount() +
+			sizeof(ColliderComponent) * colliders.GetCount() +
+			sizeof(ColliderComponent) * colliders.GetCount()
+		);
+		aabb_colliders_cpu = (wi::primitive::AABB*)collider_deinterleaved_data.data();
+		colliders_cpu = (ColliderComponent*)(aabb_colliders_cpu + colliders.GetCount());
+		colliders_gpu = colliders_cpu + colliders.GetCount();
+
+		for (size_t i = 0; i < colliders.GetCount(); ++i)
+		{
+			ColliderComponent& collider = colliders[i];
+			Entity entity = colliders.GetEntity(i);
+			const TransformComponent* transform = transforms.GetComponent(entity);
+			if (transform == nullptr)
+				return;
+
+			XMFLOAT3 scale = transform->GetScale();
+			collider.sphere.radius = collider.radius * std::max(scale.x, std::max(scale.y, scale.z));
+			collider.capsule.radius = collider.sphere.radius;
+
+			XMMATRIX W = XMLoadFloat4x4(&transform->world);
+			XMVECTOR offset = XMLoadFloat3(&collider.offset);
+			XMVECTOR tail = XMLoadFloat3(&collider.tail);
+			offset = XMVector3Transform(offset, W);
+			tail = XMVector3Transform(tail, W);
+
+			XMStoreFloat3(&collider.sphere.center, offset);
+			XMVECTOR N = XMVector3Normalize(offset - tail);
+			offset += N * collider.capsule.radius;
+			tail -= N * collider.capsule.radius;
+			XMStoreFloat3(&collider.capsule.base, offset);
+			XMStoreFloat3(&collider.capsule.tip, tail);
+
+			AABB aabb;
+
+			switch (collider.shape)
+			{
+			default:
+			case ColliderComponent::Shape::Sphere:
+				aabb.createFromHalfWidth(collider.sphere.center, XMFLOAT3(collider.sphere.radius, collider.sphere.radius, collider.sphere.radius));
+				break;
+			case ColliderComponent::Shape::Capsule:
+				aabb = collider.capsule.getAABB();
+				break;
+			case ColliderComponent::Shape::Plane:
+			{
+				collider.plane.origin = collider.sphere.center;
+				XMVECTOR N = XMVectorSet(0, 1, 0, 0);
+				N = XMVector3Normalize(XMVector3TransformNormal(N, W));
+				XMStoreFloat3(&collider.plane.normal, N);
+
+				aabb.createFromHalfWidth(XMFLOAT3(0, 0, 0), XMFLOAT3(1, 1, 1));
+
+				XMMATRIX PLANE = XMMatrixScaling(collider.radius, 1, collider.radius);
+				PLANE = PLANE * XMMatrixTranslationFromVector(XMLoadFloat3(&collider.offset));
+				PLANE = PLANE * W;
+				aabb = aabb.transform(PLANE);
+
+				PLANE = XMMatrixInverse(nullptr, PLANE);
+				XMStoreFloat4x4(&collider.plane.projection, PLANE);
+			}
+			break;
+			}
+
+			if (collider.IsCPUEnabled())
+			{
+				uint32_t index = collider_allocator_cpu.fetch_add(1u);
+				colliders_cpu[index] = collider;
+				aabb_colliders_cpu[index] = aabb;
+			}
+			if (collider.IsGPUEnabled())
+			{
+				uint32_t index = collider_allocator_gpu.fetch_add(1u);
+				colliders_gpu[index] = collider;
+			}
+		}
+		collider_count_cpu = collider_allocator_cpu.load();
+		collider_count_gpu = collider_allocator_gpu.load();
+		collider_bvh.Build(aabb_colliders_cpu, collider_count_cpu);
 	}
 	void Scene::FindAllEntities(wi::unordered_set<wi::ecs::Entity>& entities) const
 	{
@@ -2090,6 +2227,9 @@ namespace wi::scene
 					// The interpolated raw values will be blended on top of component values:
 					const float t = animation.amount;
 
+					// CheckIf this channel is the root motion bone or not.
+					const bool isRootBone = (animation.IsRootMotion() && animation.rootMotionBone != wi::ecs::INVALID_ENTITY && (target_transform == transforms.GetComponent(animation.rootMotionBone)));
+
 					if (target_transform != nullptr)
 					{
 						target_transform->SetDirty();
@@ -2117,7 +2257,40 @@ namespace wi::scene
 								}
 							}
 							const XMVECTOR T = XMVectorLerp(aT, bT, t);
-							XMStoreFloat3(&target_transform->translation_local, T);
+							if (!isRootBone)
+							{
+								// Not root motion bone.
+								XMStoreFloat3(&target_transform->translation_local, T);
+							}
+							else
+							{
+								if (XMVector4Equal(animation.rootPrevTranslation, animation.INVALID_VECTOR) || animation.end < animation.prevLocTimer)
+								{
+									// If root motion bone.
+									animation.rootPrevTranslation = T;
+								}
+
+								XMVECTOR rotation_quat = animation.rootPrevRotation;
+
+								if (XMVector4Equal(animation.rootPrevRotation, animation.INVALID_VECTOR) || animation.end < animation.prevRotTimer)
+								{
+									// If root motion bone.
+									rotation_quat = XMLoadFloat4(&target_transform->rotation_local);
+								}
+
+								const XMVECTOR root_trans = XMVectorSubtract(T, animation.rootPrevTranslation);
+								XMVECTOR inverseQuaternion = XMQuaternionInverse(rotation_quat);
+								XMVECTOR rotatedDirectionVector = XMVector3Rotate(root_trans, inverseQuaternion);
+
+								XMMATRIX mat = XMLoadFloat4x4(&target_transform->world);
+								rotatedDirectionVector = XMVector4Transform(rotatedDirectionVector, mat);
+
+								// Store root motion offset
+								XMStoreFloat3(&animation.rootTranslationOffset, rotatedDirectionVector);
+								// If root motion bone.
+								animation.rootPrevTranslation = T;
+								animation.prevLocTimer = animation.timer;
+							}
 						}
 						break;
 						case AnimationComponent::AnimationChannel::Path::ROTATION:
@@ -2141,7 +2314,41 @@ namespace wi::scene
 								}
 							}
 							const XMVECTOR R = XMQuaternionSlerp(aR, bR, t);
-							XMStoreFloat4(&target_transform->rotation_local, R);
+							if (!isRootBone)
+							{
+								// Not root motion bone.
+								XMStoreFloat4(&target_transform->rotation_local, R);
+							}
+							else
+							{
+								if (XMVector4Equal(animation.rootPrevRotation, animation.INVALID_VECTOR) || animation.end < animation.prevRotTimer)
+								{
+									// If root motion bone.
+									animation.rootPrevRotation = R;
+								}
+
+								// Assuming q1 and q2 are the two quaternions you want to subtract
+								// // Let's say you want to find the relative rotation from q1 to q2
+								XMMATRIX mat1 = XMMatrixRotationQuaternion(animation.rootPrevRotation);
+								XMMATRIX mat2 = XMMatrixRotationQuaternion(R);
+								// Compute the relative rotation matrix by multiplying the inverse of the first rotation
+								// by the second rotation
+								XMMATRIX relativeRotationMatrix = XMMatrixMultiply(XMMatrixTranspose(mat1), mat2);
+								// Extract the quaternion representing the relative rotation
+								XMVECTOR relativeRotationQuaternion = XMQuaternionRotationMatrix(relativeRotationMatrix);
+
+								// Store root motion offset
+								XMStoreFloat4(&animation.rootRotationOffset, relativeRotationQuaternion);
+								// Swap Y and Z Axis for Unknown reason
+								const float Y = animation.rootRotationOffset.y;
+								animation.rootRotationOffset.y = animation.rootRotationOffset.z;
+								animation.rootRotationOffset.z = Y;
+
+								// If root motion bone.
+								animation.rootPrevRotation = R;
+								animation.prevRotTimer = animation.timer;
+							}
+
 						}
 						break;
 						case AnimationComponent::AnimationChannel::Path::SCALE:
@@ -3977,6 +4184,7 @@ namespace wi::scene
 				inst.fadeDistance = object.fadeDistance;
 				inst.center = object.center;
 				inst.radius = object.radius;
+				inst.vb_ao = object.vb_ao_srv;
 				inst.SetUserStencilRef(object.userStencilRef);
 
 				std::memcpy(instanceArrayMapped + args.jobIndex, &inst, sizeof(inst)); // memcpy whole structure into mapped pointer to avoid read from uncached memory
@@ -4306,6 +4514,11 @@ namespace wi::scene
 			if (!transforms.Contains(entity))
 				return;
 
+			if (hair.IsDirty())
+			{
+				hair.SetDirty(false);
+			}
+
 			const LayerComponent* layer = layers.GetComponent(entity);
 			if (layer != nullptr)
 			{
@@ -4527,7 +4740,6 @@ namespace wi::scene
 			ocean.occlusionQueries[queryheap_idx] = -1; // invalidate query
 		}
 
-		rain_blocker_dummy_light.shadow_rect = {};
 		if (weather.rain_amount > 0)
 		{
 			GraphicsDevice* device = wi::graphics::GetDevice();
@@ -4659,6 +4871,12 @@ namespace wi::scene
 		{
 			SoundComponent& sound = sounds[i];
 
+			if (!sound.soundinstance.IsValid())
+			{
+				sound.soundinstance.SetLooped(sound.IsLooped());
+				wi::audio::CreateSoundInstance(&sound.soundResource.GetSound(), &sound.soundinstance);
+			}
+
 			if (!sound.IsDisable3D())
 			{
 				Entity entity = sounds.GetEntity(i);
@@ -4710,6 +4928,8 @@ namespace wi::scene
 	}
 	void Scene::RunScriptUpdateSystem(wi::jobsystem::context& ctx)
 	{
+		if (dt == 0)
+			return; // not allowed to be run when dt == 0 as it could be on separate thread!
 		auto range = wi::profiler::BeginRangeCPU("Script Components");
 		for (size_t i = 0; i < scripts.GetCount(); ++i)
 		{
@@ -4817,6 +5037,7 @@ namespace wi::scene
 						result.bary = {};
 						result.entity = colliders.GetEntity(collider_index);
 						result.normal = direction;
+						result.uv = {};
 						result.velocity = {};
 						XMStoreFloat3(&result.position, rayOrigin + rayDirection * dist);
 						result.subsetIndex = -1;
@@ -4854,8 +5075,6 @@ namespace wi::scene
 				const XMVECTOR rayOrigin_local = XMVector3Transform(rayOrigin, objectMat_Inverse);
 				const XMVECTOR rayDirection_local = XMVector3Normalize(XMVector3TransformNormal(rayDirection, objectMat_Inverse));
 				const ArmatureComponent* armature = mesh->IsSkinned() ? armatures.GetComponent(mesh->armatureID) : nullptr;
-				const XMVECTOR aabb_min = XMLoadFloat3(&mesh->aabb._min);
-				const XMVECTOR aabb_max = XMLoadFloat3(&mesh->aabb._max);
 
 				auto intersect_triangle = [&](uint32_t subsetIndex, uint32_t indexOffset, uint32_t triangleIndex)
 				{
@@ -4919,6 +5138,32 @@ namespace wi::scene
 							nor = XMVector3Normalize(XMVector3TransformNormal(nor, objectMat));
 							const XMVECTOR vel = pos - XMVector3Transform(pos_local, objectMatPrev);
 
+							result.uv = {};
+							if (!mesh->vertex_uvset_0.empty())
+							{
+								XMVECTOR uv = XMVectorBaryCentric(
+									XMLoadFloat2(&mesh->vertex_uvset_0[i0]),
+									XMLoadFloat2(&mesh->vertex_uvset_0[i1]),
+									XMLoadFloat2(&mesh->vertex_uvset_0[i2]),
+									bary.x,
+									bary.y
+								);
+								result.uv.x = XMVectorGetX(uv);
+								result.uv.y = XMVectorGetY(uv);
+							}
+							if (!mesh->vertex_uvset_1.empty())
+							{
+								XMVECTOR uv = XMVectorBaryCentric(
+									XMLoadFloat2(&mesh->vertex_uvset_1[i0]),
+									XMLoadFloat2(&mesh->vertex_uvset_1[i1]),
+									XMLoadFloat2(&mesh->vertex_uvset_1[i2]),
+									bary.x,
+									bary.y
+								);
+								result.uv.z = XMVectorGetX(uv);
+								result.uv.w = XMVectorGetY(uv);
+							}
+
 							result.entity = entity;
 							XMStoreFloat3(&result.position, pos);
 							XMStoreFloat3(&result.normal, nor);
@@ -4950,7 +5195,7 @@ namespace wi::scene
 				}
 				else
 				{
-					// Brute-force interection test:
+					// Brute-force intersection test:
 					uint32_t first_subset = 0;
 					uint32_t last_subset = 0;
 					mesh->GetLODSubsetRange(lod, first_subset, last_subset);
@@ -4974,6 +5219,172 @@ namespace wi::scene
 
 		result.orientation = ray.GetPlacementOrientation(result.position, result.normal);
 
+		return result;
+	}
+	bool Scene::IntersectsFirst(const wi::primitive::Ray& ray, uint32_t filterMask, uint32_t layerMask, uint32_t lod) const
+	{
+		bool result = false;
+
+		const XMVECTOR rayOrigin = XMLoadFloat3(&ray.origin);
+		const XMVECTOR rayDirection = XMVector3Normalize(XMLoadFloat3(&ray.direction));
+
+		if ((filterMask & FILTER_COLLIDER) && collider_bvh.IsValid())
+		{
+			collider_bvh.IntersectsFirst(ray, [&](uint32_t collider_index) {
+				const ColliderComponent& collider = colliders_cpu[collider_index];
+
+				if ((collider.layerMask & layerMask) == 0)
+					return false;
+
+				float dist = 0;
+				XMFLOAT3 direction = {};
+				bool intersects = false;
+
+				switch (collider.shape)
+				{
+				default:
+				case ColliderComponent::Shape::Sphere:
+					intersects = ray.intersects(collider.sphere, dist, direction);
+					break;
+				case ColliderComponent::Shape::Capsule:
+					intersects = ray.intersects(collider.capsule, dist, direction);
+					break;
+				case ColliderComponent::Shape::Plane:
+					intersects = ray.intersects(collider.plane, dist, direction);
+					break;
+				}
+
+				if (intersects)
+				{
+					result = true;
+					return true;
+				}
+				return false;
+			});
+			if (result)
+				return result;
+		}
+
+		if (filterMask & FILTER_OBJECT_ALL)
+		{
+			for (size_t objectIndex = 0; objectIndex < aabb_objects.size(); ++objectIndex)
+			{
+				const AABB& aabb = aabb_objects[objectIndex];
+				if (!ray.intersects(aabb) || (layerMask & aabb.layerMask) == 0)
+					continue;
+
+				const ObjectComponent& object = objects[objectIndex];
+				if (object.meshID == INVALID_ENTITY)
+					continue;
+				if ((filterMask & object.GetFilterMask()) == 0)
+					continue;
+
+				const MeshComponent* mesh = meshes.GetComponent(object.meshID);
+				if (mesh == nullptr)
+					continue;
+
+				const Entity entity = objects.GetEntity(objectIndex);
+				const SoftBodyPhysicsComponent* softbody = softbodies.GetComponent(object.meshID);
+				const XMMATRIX objectMat = XMLoadFloat4x4(&matrix_objects[objectIndex]);
+				const XMMATRIX objectMatPrev = XMLoadFloat4x4(&matrix_objects_prev[objectIndex]);
+				const XMMATRIX objectMat_Inverse = XMMatrixInverse(nullptr, objectMat);
+				const XMVECTOR rayOrigin_local = XMVector3Transform(rayOrigin, objectMat_Inverse);
+				const XMVECTOR rayDirection_local = XMVector3Normalize(XMVector3TransformNormal(rayDirection, objectMat_Inverse));
+				const ArmatureComponent* armature = mesh->IsSkinned() ? armatures.GetComponent(mesh->armatureID) : nullptr;
+
+				auto intersect_triangle = [&](uint32_t subsetIndex, uint32_t indexOffset, uint32_t triangleIndex)
+				{
+					const uint32_t i0 = mesh->indices[indexOffset + triangleIndex * 3 + 0];
+					const uint32_t i1 = mesh->indices[indexOffset + triangleIndex * 3 + 1];
+					const uint32_t i2 = mesh->indices[indexOffset + triangleIndex * 3 + 2];
+
+					XMVECTOR p0;
+					XMVECTOR p1;
+					XMVECTOR p2;
+
+					const bool softbody_active = softbody != nullptr && softbody->HasVertices();
+					if (softbody_active)
+					{
+						p0 = softbody->vertex_positions_simulation[i0].LoadPOS();
+						p1 = softbody->vertex_positions_simulation[i1].LoadPOS();
+						p2 = softbody->vertex_positions_simulation[i2].LoadPOS();
+					}
+					else
+					{
+						if (armature == nullptr || armature->boneData.empty())
+						{
+							p0 = XMLoadFloat3(&mesh->vertex_positions[i0]);
+							p1 = XMLoadFloat3(&mesh->vertex_positions[i1]);
+							p2 = XMLoadFloat3(&mesh->vertex_positions[i2]);
+						}
+						else
+						{
+							p0 = SkinVertex(*mesh, *armature, i0);
+							p1 = SkinVertex(*mesh, *armature, i1);
+							p2 = SkinVertex(*mesh, *armature, i2);
+						}
+					}
+
+					float distance;
+					XMFLOAT2 bary;
+					if (wi::math::RayTriangleIntersects(rayOrigin_local, rayDirection_local, p0, p1, p2, distance, bary))
+					{
+						const XMVECTOR pos_local = XMVectorAdd(rayOrigin_local, rayDirection_local * distance);
+						const XMVECTOR pos = XMVector3Transform(pos_local, objectMat);
+						distance = wi::math::Distance(pos, rayOrigin);
+
+						// Note: we do the TMin, Tmax check here, in world space! We use the RayTriangleIntersects in local space, so we don't use those in there
+						if (distance >= ray.TMin && distance <= ray.TMax)
+						{
+							result = true;
+							return true;
+						}
+					}
+					return false;
+				};
+
+				if (mesh->bvh.IsValid())
+				{
+					Ray ray_local = Ray(rayOrigin_local, rayDirection_local);
+
+					mesh->bvh.IntersectsFirst(ray_local, [&](uint32_t index) {
+						const uint32_t userdata = mesh->bvh_leaf_aabbs[index].userdata;
+						const uint32_t triangleIndex = userdata & 0xFFFFFF;
+						const uint32_t subsetIndex = userdata >> 24u;
+						const MeshComponent::MeshSubset& subset = mesh->subsets[subsetIndex];
+						if (subset.indexCount == 0)
+							return false;
+						const uint32_t indexOffset = subset.indexOffset;
+						return intersect_triangle(subsetIndex, indexOffset, triangleIndex);
+					});
+				}
+				else
+				{
+					// Brute-force intersection test:
+					uint32_t first_subset = 0;
+					uint32_t last_subset = 0;
+					mesh->GetLODSubsetRange(lod, first_subset, last_subset);
+					for (uint32_t subsetIndex = first_subset; subsetIndex < last_subset; ++subsetIndex)
+					{
+						const MeshComponent::MeshSubset& subset = mesh->subsets[subsetIndex];
+						if (subset.indexCount == 0)
+							continue;
+						const uint32_t indexOffset = subset.indexOffset;
+						const uint32_t triangleCount = subset.indexCount / 3;
+
+						for (uint32_t triangleIndex = 0; triangleIndex < triangleCount; ++triangleIndex)
+						{
+							if (intersect_triangle(subsetIndex, indexOffset, triangleIndex))
+							{
+								result = true;
+								return true;
+							}
+						}
+					}
+				}
+
+			}
+		}
 		return result;
 	}
 	Scene::SphereIntersectionResult Scene::Intersects(const Sphere& sphere, uint32_t filterMask, uint32_t layerMask, uint32_t lod) const
@@ -5050,8 +5461,6 @@ namespace wi::scene
 				const XMMATRIX objectMatPrev = XMLoadFloat4x4(&matrix_objects_prev[objectIndex]);
 				const XMMATRIX objectMatInverse = XMMatrixInverse(nullptr, objectMat);
 				const ArmatureComponent* armature = mesh->IsSkinned() ? armatures.GetComponent(mesh->armatureID) : nullptr;
-				const XMVECTOR aabb_min = XMLoadFloat3(&mesh->aabb._min);
-				const XMVECTOR aabb_max = XMLoadFloat3(&mesh->aabb._max);
 
 				auto intersect_triangle = [&](uint32_t subsetIndex, uint32_t indexOffset, uint32_t triangleIndex)
 				{
@@ -5227,7 +5636,7 @@ namespace wi::scene
 				}
 				else
 				{
-					// Brute-force interection test:
+					// Brute-force intersection test:
 					uint32_t first_subset = 0;
 					uint32_t last_subset = 0;
 					mesh->GetLODSubsetRange(lod, first_subset, last_subset);
@@ -5334,8 +5743,6 @@ namespace wi::scene
 				const XMMATRIX objectMatPrev = XMLoadFloat4x4(&matrix_objects_prev[objectIndex]);
 				const ArmatureComponent* armature = mesh->IsSkinned() ? armatures.GetComponent(mesh->armatureID) : nullptr;
 				const XMMATRIX objectMat_Inverse = XMMatrixInverse(nullptr, objectMat);
-				const XMVECTOR aabb_min = XMLoadFloat3(&mesh->aabb._min);
-				const XMVECTOR aabb_max = XMLoadFloat3(&mesh->aabb._max);
 				
 				auto intersect_triangle = [&](uint32_t subsetIndex, uint32_t indexOffset, uint32_t triangleIndex)
 				{
@@ -5625,7 +6032,7 @@ namespace wi::scene
 				}
 				else
 				{
-					// Brute-force interection test:
+					// Brute-force intersection test:
 					uint32_t first_subset = 0;
 					uint32_t last_subset = 0;
 					mesh->GetLODSubsetRange(lod, first_subset, last_subset);
@@ -5649,6 +6056,195 @@ namespace wi::scene
 
 		result.orientation = capsule.GetPlacementOrientation(result.position, result.normal);
 
+		return result;
+	}
+
+	void Scene::VoxelizeObject(size_t objectIndex, wi::VoxelGrid& grid, bool subtract, uint32_t lod)
+	{
+		if (objectIndex >= objects.GetCount() || objectIndex >= aabb_objects.size())
+			return;
+		if (aabb_objects[objectIndex].intersects(grid.get_aabb()) == wi::primitive::AABB::OUTSIDE)
+			return;
+		const ObjectComponent& object = objects[objectIndex];
+		const MeshComponent* mesh = meshes.GetComponent(object.meshID);
+		if (mesh == nullptr)
+			return;
+		const SoftBodyPhysicsComponent* softbody = softbodies.GetComponent(object.meshID);
+		const XMMATRIX objectMat = XMLoadFloat4x4(&matrix_objects[objectIndex]);
+		const ArmatureComponent* armature = mesh->IsSkinned() ? armatures.GetComponent(mesh->armatureID) : nullptr;
+
+		uint32_t first_subset = 0;
+		uint32_t last_subset = 0;
+		mesh->GetLODSubsetRange(lod, first_subset, last_subset);
+		for (uint32_t subsetIndex = first_subset; subsetIndex < last_subset; ++subsetIndex)
+		{
+			const MeshComponent::MeshSubset& subset = mesh->subsets[subsetIndex];
+			if (subset.indexCount == 0)
+				continue;
+			const uint32_t indexOffset = subset.indexOffset;
+			const uint32_t triangleCount = subset.indexCount / 3;
+
+			for (uint32_t triangleIndex = 0; triangleIndex < triangleCount; ++triangleIndex)
+			{
+				const uint32_t i0 = mesh->indices[indexOffset + triangleIndex * 3 + 0];
+				const uint32_t i1 = mesh->indices[indexOffset + triangleIndex * 3 + 1];
+				const uint32_t i2 = mesh->indices[indexOffset + triangleIndex * 3 + 2];
+
+				XMVECTOR p0;
+				XMVECTOR p1;
+				XMVECTOR p2;
+
+				const bool softbody_active = softbody != nullptr && softbody->HasVertices();
+				if (softbody_active)
+				{
+					p0 = softbody->vertex_positions_simulation[i0].LoadPOS();
+					p1 = softbody->vertex_positions_simulation[i1].LoadPOS();
+					p2 = softbody->vertex_positions_simulation[i2].LoadPOS();
+				}
+				else
+				{
+					if (armature == nullptr || armature->boneData.empty())
+					{
+						p0 = XMLoadFloat3(&mesh->vertex_positions[i0]);
+						p1 = XMLoadFloat3(&mesh->vertex_positions[i1]);
+						p2 = XMLoadFloat3(&mesh->vertex_positions[i2]);
+					}
+					else
+					{
+						p0 = SkinVertex(*mesh, *armature, i0);
+						p1 = SkinVertex(*mesh, *armature, i1);
+						p2 = SkinVertex(*mesh, *armature, i2);
+					}
+
+					p0 = XMVector3Transform(p0, objectMat);
+					p1 = XMVector3Transform(p1, objectMat);
+					p2 = XMVector3Transform(p2, objectMat);
+				}
+
+				grid.inject_triangle(p0, p1, p2, subtract);
+			}
+		}
+	}
+	
+	void Scene::VoxelizeScene(wi::VoxelGrid& voxelgrid, bool subtract, uint32_t filterMask, uint32_t layerMask, uint32_t lod)
+	{
+		wi::jobsystem::context ctx;
+		if ((filterMask & FILTER_COLLIDER))
+		{
+			for (size_t i = 0; i < collider_count_cpu; ++i)
+			{
+				const ColliderComponent& collider = colliders_cpu[i];
+
+				if ((collider.layerMask & layerMask) == 0)
+					continue;
+
+				switch (collider.shape)
+				{
+				default:
+				case ColliderComponent::Shape::Sphere:
+				{
+					Sphere sphere = collider.sphere;
+					// TODO: fix heap allocating lambda capture!
+					wi::jobsystem::Execute(ctx, [&voxelgrid, subtract, sphere](wi::jobsystem::JobArgs args) {
+						voxelgrid.inject_sphere(sphere, subtract);
+						});
+				}
+				break;
+				case ColliderComponent::Shape::Capsule:
+				{
+					Capsule capsule = collider.capsule;
+					// TODO: fix heap allocating lambda capture!
+					wi::jobsystem::Execute(ctx, [&voxelgrid, subtract, capsule](wi::jobsystem::JobArgs args) {
+						voxelgrid.inject_capsule(capsule, subtract);
+						});
+				}
+				break;
+				case ColliderComponent::Shape::Plane:
+				{
+					XMMATRIX planeMatrix = XMMatrixInverse(nullptr, XMLoadFloat4x4(&collider.plane.projection));
+					XMVECTOR P0 = XMVector3Transform(XMVectorSet(-1, 0, -1, 1), planeMatrix);
+					XMVECTOR P1 = XMVector3Transform(XMVectorSet(1, 0, -1, 1), planeMatrix);
+					XMVECTOR P2 = XMVector3Transform(XMVectorSet(1, 0, 1, 1), planeMatrix);
+					XMVECTOR P3 = XMVector3Transform(XMVectorSet(-1, 0, 1, 1), planeMatrix);
+					// TODO: fix heap allocating lambda capture!
+					wi::jobsystem::Execute(ctx, [&voxelgrid, subtract, P0, P1, P2, P3](wi::jobsystem::JobArgs args) {
+						voxelgrid.inject_triangle(P0, P1, P2, subtract);
+						voxelgrid.inject_triangle(P0, P2, P3, subtract);
+						});
+				}
+				break;
+				}
+			}
+		}
+		if (filterMask & FILTER_OBJECT_ALL)
+		{
+			for (size_t i = 0; i < objects.GetCount(); ++i)
+			{
+				const ObjectComponent& object = objects[i];
+				if ((filterMask & object.GetFilterMask()) == 0)
+					continue;
+				const AABB& aabb = aabb_objects[i];
+				if ((layerMask & aabb.layerMask) == 0)
+					continue;
+				// TODO: fix heap allocating lambda capture!
+				wi::jobsystem::Execute(ctx, [this, &voxelgrid, subtract, lod, i](wi::jobsystem::JobArgs args) {
+					VoxelizeObject(i, voxelgrid, subtract, lod);
+					});
+			}
+		}
+		wi::jobsystem::Wait(ctx);
+	}
+
+	XMFLOAT3 Scene::GetPositionOnSurface(wi::ecs::Entity objectEntity, int vertexID0, int vertexID1, int vertexID2, const XMFLOAT2& bary) const
+	{
+		const ObjectComponent* object = objects.GetComponent(objectEntity);
+		if (object == nullptr || object->meshID == INVALID_ENTITY)
+			return XMFLOAT3(0, 0, 0);
+		const MeshComponent* mesh = meshes.GetComponent(object->meshID);
+		if (mesh == nullptr)
+			return XMFLOAT3(0, 0, 0);
+
+		const SoftBodyPhysicsComponent* softbody = softbodies.GetComponent(object->meshID);
+		const ArmatureComponent* armature = mesh->IsSkinned() ? armatures.GetComponent(mesh->armatureID) : nullptr;
+
+		XMVECTOR p0;
+		XMVECTOR p1;
+		XMVECTOR p2;
+
+		const bool softbody_active = softbody != nullptr && softbody->HasVertices();
+		if (softbody_active)
+		{
+			p0 = softbody->vertex_positions_simulation[vertexID0].LoadPOS();
+			p1 = softbody->vertex_positions_simulation[vertexID1].LoadPOS();
+			p2 = softbody->vertex_positions_simulation[vertexID2].LoadPOS();
+		}
+		else
+		{
+			if (armature == nullptr || armature->boneData.empty())
+			{
+				p0 = XMLoadFloat3(&mesh->vertex_positions[vertexID0]);
+				p1 = XMLoadFloat3(&mesh->vertex_positions[vertexID1]);
+				p2 = XMLoadFloat3(&mesh->vertex_positions[vertexID2]);
+			}
+			else
+			{
+				p0 = SkinVertex(*mesh, *armature, vertexID0);
+				p1 = SkinVertex(*mesh, *armature, vertexID1);
+				p2 = SkinVertex(*mesh, *armature, vertexID2);
+			}
+		}
+
+		XMVECTOR P = XMVectorBaryCentric(p0, p1, p2, bary.x, bary.y);
+
+		if (!softbody_active)
+		{
+			const size_t objectIndex = objects.GetIndex(objectEntity);
+			const XMMATRIX objectMat = XMLoadFloat4x4(&matrix_objects[objectIndex]);
+			P = XMVector3Transform(P, objectMat);
+		}
+
+		XMFLOAT3 result;
+		XMStoreFloat3(&result, P);
 		return result;
 	}
 
@@ -5729,57 +6325,78 @@ namespace wi::scene
 
 	Entity LoadModel(const std::string& fileName, const XMMATRIX& transformMatrix, bool attached)
 	{
-		Scene scene;
-		Entity root = LoadModel(scene, fileName, transformMatrix, attached);
-		GetScene().Merge(scene);
-		return root;
+		Entity rootEntity = INVALID_ENTITY;
+		if (attached)
+		{
+			rootEntity = CreateEntity();
+		}
+		LoadModel2(fileName, transformMatrix, rootEntity);
+		return rootEntity;
 	}
 
 	Entity LoadModel(Scene& scene, const std::string& fileName, const XMMATRIX& transformMatrix, bool attached)
 	{
-		wi::Archive archive(fileName, true);
-		if (archive.IsOpen())
+		Entity rootEntity = INVALID_ENTITY;
+		if (attached)
 		{
-			// Serialize it from file:
-			scene.Serialize(archive);
+			rootEntity = CreateEntity();
+		}
+		LoadModel2(scene, fileName, transformMatrix, rootEntity);
+		return rootEntity;
+	}
 
-			// First, create new root:
-			Entity root = CreateEntity();
-			scene.transforms.Create(root);
-			scene.layers.Create(root).layerMask = ~0;
+	void LoadModel2(const std::string& fileName, const XMMATRIX& transformMatrix, Entity rootEntity)
+	{
+		Scene scene;
+		LoadModel(scene, fileName, transformMatrix, rootEntity);
+		GetScene().Merge(scene);
+	}
 
+	void LoadModel2(Scene& scene, const std::string& fileName, const XMMATRIX& transformMatrix, Entity rootEntity)
+	{
+		wi::Archive archive(fileName, true);
+		if (!archive.IsOpen())
+			return;
+
+		// Serialize it from file:
+		scene.Serialize(archive);
+
+		// First, create new root:
+		bool attached = true;
+		if (rootEntity == INVALID_ENTITY)
+		{
+			rootEntity = CreateEntity();
+			attached = false;
+		}
+		scene.transforms.Create(rootEntity);
+		scene.layers.Create(rootEntity).layerMask = ~0;
+
+		{
+			// Apply the optional transformation matrix to the new scene:
+
+			// Parent all unparented transforms to new root entity
+			for (size_t i = 0; i < scene.transforms.GetCount(); ++i)
 			{
-				// Apply the optional transformation matrix to the new scene:
-
-				// Parent all unparented transforms to new root entity
-				for (size_t i = 0; i < scene.transforms.GetCount() - 1; ++i) // GetCount() - 1 because the last added was the "root"
+				Entity entity = scene.transforms.GetEntity(i);
+				if (entity != rootEntity && !scene.hierarchy.Contains(entity))
 				{
-					Entity entity = scene.transforms.GetEntity(i);
-					if (!scene.hierarchy.Contains(entity))
-					{
-						scene.Component_Attach(entity, root);
-					}
+					scene.Component_Attach(entity, rootEntity);
 				}
-
-				// The root component is transformed, scene is updated:
-				TransformComponent* root_transform = scene.transforms.GetComponent(root);
-				root_transform->MatrixTransform(transformMatrix);
-
-				scene.Update(0);
 			}
 
-			if (!attached)
-			{
-				// In this case, we don't care about the root anymore, so delete it. This will simplify overall hierarchy
-				scene.Component_DetachChildren(root);
-				scene.Entity_Remove(root);
-				root = INVALID_ENTITY;
-			}
+			// The root component is transformed, scene is updated:
+			TransformComponent* root_transform = scene.transforms.GetComponent(rootEntity);
+			root_transform->MatrixTransform(transformMatrix);
 
-			return root;
+			scene.Update(0);
 		}
 
-		return INVALID_ENTITY;
+		if (!attached)
+		{
+			// In this case, we don't care about the root anymore, so delete it. This will simplify overall hierarchy
+			scene.Component_DetachChildren(rootEntity);
+			scene.Entity_Remove(rootEntity);
+		}
 	}
 
 	PickResult Pick(const wi::primitive::Ray& ray, uint32_t filterMask, uint32_t layerMask, const Scene& scene, uint32_t lod)

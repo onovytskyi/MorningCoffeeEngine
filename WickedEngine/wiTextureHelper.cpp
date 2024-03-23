@@ -24,11 +24,14 @@ namespace wi::texturehelper
 		HELPERTEXTURE_LOGO,
 		HELPERTEXTURE_RANDOM64X64,
 		HELPERTEXTURE_COLORGRADEDEFAULT,
-		HELPERTEXTURE_NORMALMAPDEFAULT,
 		HELPERTEXTURE_BLACKCUBEMAP,
 		HELPERTEXTURE_UINT4,
 		HELPERTEXTURE_BLUENOISE,
 		HELPERTEXTURE_WATERRIPPLE,
+		HELPERTEXTURE_BLACK,
+		HELPERTEXTURE_WHITE,
+		HELPERTEXTURE_TRANSPARENT,
+		HELPERTEXTURE_NORMALMAPDEFAULT,
 		HELPERTEXTURE_COUNT
 	};
 	wi::graphics::Texture helperTextures[HELPERTEXTURE_COUNT];
@@ -188,6 +191,25 @@ namespace wi::texturehelper
 			device->SetName(&helperTextures[HELPERTEXTURE_WATERRIPPLE], "HELPERTEXTURE_WATERRIPPLE");
 		}
 
+		// Single colors:
+		{
+			wi::Color color = wi::Color::Black();
+			CreateTexture(helperTextures[HELPERTEXTURE_BLACK], (const uint8_t*)&color, 1, 1);
+			device->SetName(&helperTextures[HELPERTEXTURE_BLACK], "HELPERTEXTURE_BLACK");
+
+			color = wi::Color::White();
+			CreateTexture(helperTextures[HELPERTEXTURE_WHITE], (const uint8_t*)&color, 1, 1);
+			device->SetName(&helperTextures[HELPERTEXTURE_WHITE], "HELPERTEXTURE_WHITE");
+
+			color = wi::Color::Transparent();
+			CreateTexture(helperTextures[HELPERTEXTURE_TRANSPARENT], (const uint8_t*)&color, 1, 1);
+			device->SetName(&helperTextures[HELPERTEXTURE_TRANSPARENT], "HELPERTEXTURE_TRANSPARENT");
+
+			color = wi::Color(127, 127, 255, 255);
+			CreateTexture(helperTextures[HELPERTEXTURE_NORMALMAPDEFAULT], (const uint8_t*)&color, 1, 1);
+			device->SetName(&helperTextures[HELPERTEXTURE_NORMALMAPDEFAULT], "HELPERTEXTURE_NORMALMAPDEFAULT");
+		}
+
 		wi::backlog::post("wi::texturehelper Initialized (" + std::to_string((int)std::round(timer.elapsed())) + " ms)");
 	}
 
@@ -205,7 +227,7 @@ namespace wi::texturehelper
 	}
 	const Texture* getNormalMapDefault()
 	{
-		return getColor(wi::Color(127, 127, 255, 255));
+		return &helperTextures[HELPERTEXTURE_NORMALMAPDEFAULT];
 	}
 	const Texture* getBlackCubeMap()
 	{
@@ -225,53 +247,15 @@ namespace wi::texturehelper
 	}
 	const Texture* getWhite()
 	{
-		return getColor(wi::Color(255, 255, 255, 255));
+		return &helperTextures[HELPERTEXTURE_WHITE];
 	}
 	const Texture* getBlack()
 	{
-		return getColor(wi::Color(0, 0, 0, 255));
+		return &helperTextures[HELPERTEXTURE_BLACK];
 	}
 	const Texture* getTransparent()
 	{
-		return getColor(wi::Color(0, 0, 0, 0));
-	}
-	const Texture* getColor(wi::Color color)
-	{
-		colorlock.lock();
-		auto it = colorTextures.find(color.rgba);
-		auto end = colorTextures.end();
-		colorlock.unlock();
-
-		if (it != end)
-		{
-			return &it->second;
-		}
-
-		GraphicsDevice* device = wi::graphics::GetDevice();
-
-		static const int dim = 1;
-		static const int dataLength = dim * dim * 4;
-		uint8_t data[dataLength];
-		for (int i = 0; i < dataLength; i += 4)
-		{
-			data[i] = color.getR();
-			data[i + 1] = color.getG();
-			data[i + 2] = color.getB();
-			data[i + 3] = color.getA();
-		}
-
-		Texture texture;
-		if (CreateTexture(texture, data, dim, dim) == false)
-		{
-			return nullptr;
-		}
-		device->SetName(&texture, "HELPERTEXTURE_COLOR");
-
-		colorlock.lock();
-		colorTextures[color.rgba] = texture;
-		colorlock.unlock();
-
-		return &colorTextures[color.rgba];
+		return &helperTextures[HELPERTEXTURE_TRANSPARENT];
 	}
 
 
@@ -351,7 +335,7 @@ namespace wi::texturehelper
 			{
 				for (uint32_t x = 0; x < width; ++x)
 				{
-					const XMFLOAT2 uv = XMFLOAT2(float(x) / float(width - 1), float(y) / float(height - 1));
+					const XMFLOAT2 uv = XMFLOAT2((float(x) + 0.5f) / float(width), (float(y) + 0.5f) / float(height));
 					const XMVECTOR point_on_line = wi::math::ClosestPointOnLineSegment(a, b, XMLoadFloat2(&uv));
 					const float uv_distance = XMVectorGetX(XMVector3Length(point_on_line - a));
 					float gradient = wi::math::saturate(wi::math::InverseLerp(0, distance, uv_distance));
@@ -390,7 +374,7 @@ namespace wi::texturehelper
 			{
 				for (uint32_t x = 0; x < width; ++x)
 				{
-					const XMFLOAT2 uv = XMFLOAT2(float(x) / float(width - 1), float(y) / float(height - 1));
+					const XMFLOAT2 uv = XMFLOAT2((float(x) + 0.5f) / float(width), (float(y) + 0.5f) / float(height));
 					const float uv_distance = wi::math::Clamp(XMVectorGetX(XMVector3Length(XMLoadFloat2(&uv) - a)), 0, distance);
 					float gradient = wi::math::saturate(wi::math::InverseLerp(0, distance, uv_distance));
 					if (has_flag(flags, GradientFlags::Inverse))
@@ -427,7 +411,7 @@ namespace wi::texturehelper
 			{
 				for (uint32_t x = 0; x < width; ++x)
 				{
-					const XMFLOAT2 uv = XMFLOAT2(float(x) / float(width - 1), float(y) / float(height - 1));
+					const XMFLOAT2 uv = XMFLOAT2((float(x) + 0.5f) / float(width), (float(y) + 0.5f) / float(height));
 					const XMFLOAT2 coord = XMFLOAT2(uv.x - uv_start.x, uv.y - uv_start.y);
 					float gradient = wi::math::GetAngle(direction, coord) / XM_2PI;
 					if (has_flag(flags, GradientFlags::Inverse))
@@ -483,7 +467,7 @@ namespace wi::texturehelper
 		{
 			for (uint32_t x = 0; x < width; ++x)
 			{
-				const XMFLOAT2 coord = XMFLOAT2(float(x) / float(width - 1) * 2 - 1, -(float(y) / float(height - 1) * 2 - 1));
+				const XMFLOAT2 coord = XMFLOAT2((float(x) + 0.5f) / float(width) * 2 - 1, -((float(y) + 0.5f) / float(height) * 2 - 1));
 				float gradient = wi::math::GetAngle(direction, coord) / XM_2PI;
 				if (counter_clockwise)
 				{

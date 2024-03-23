@@ -37,6 +37,7 @@ void OptionsWindow::Create(EditorComponent* _editor)
 		NEW_TERRAIN,
 		NEW_SPRITE,
 		NEW_FONT,
+		NEW_VOXELGRID,
 	};
 
 	newCombo.Create("New: ");
@@ -67,6 +68,7 @@ void OptionsWindow::Create(EditorComponent* _editor)
 	newCombo.AddItem("Terrain " ICON_TERRAIN, NEW_TERRAIN);
 	newCombo.AddItem("Sprite " ICON_SPRITE, NEW_SPRITE);
 	newCombo.AddItem("Font " ICON_FONT, NEW_FONT);
+	newCombo.AddItem("Voxel Grid " ICON_VOXELGRID, NEW_VOXELGRID);
 	newCombo.OnSelect([&](wi::gui::EventArgs args) {
 		newCombo.SetSelectedWithoutCallback(-1);
 		const EditorComponent::EditorScene& editorscene = editor->GetCurrentEditorScene();
@@ -214,6 +216,7 @@ void OptionsWindow::Create(EditorComponent* _editor)
 			scene.names.Create(pick.entity) = "collider";
 			break;
 		case NEW_TERRAIN:
+			editor->componentsWnd.terrainWnd.entity = pick.entity;
 			editor->componentsWnd.terrainWnd.SetupAssets();
 			pick.entity = CreateEntity();
 			scene.terrains.Create(pick.entity) = editor->componentsWnd.terrainWnd.terrain_preset;
@@ -241,6 +244,14 @@ void OptionsWindow::Create(EditorComponent* _editor)
 			font.anim.typewriter.looped = true;
 			scene.transforms.Create(pick.entity).Translate(XMFLOAT3(0, 2, 0));
 			scene.names.Create(pick.entity) = "font";
+		}
+		break;
+		case NEW_VOXELGRID:
+		{
+			pick.entity = CreateEntity();
+			scene.voxel_grids.Create(pick.entity).init(64, 64, 64);
+			scene.transforms.Create(pick.entity).Scale(XMFLOAT3(0.25f, 0.25f, 0.25f));
+			scene.names.Create(pick.entity) = "voxelgrid";
 		}
 		break;
 		default:
@@ -295,6 +306,7 @@ void OptionsWindow::Create(EditorComponent* _editor)
 	filterCombo.AddItem(ICON_TERRAIN, (uint64_t)Filter::Terrain);
 	filterCombo.AddItem(ICON_SPRITE, (uint64_t)Filter::Sprite);
 	filterCombo.AddItem(ICON_FONT, (uint64_t)Filter::Font);
+	filterCombo.AddItem(ICON_VOXELGRID, (uint64_t)Filter::VoxelGrid);
 	filterCombo.SetTooltip("Apply filtering to the Entities by components");
 	filterCombo.OnSelect([&](wi::gui::EventArgs args) {
 		filter = (Filter)args.userdata;
@@ -601,6 +613,10 @@ void OptionsWindow::PushToEntityTree(wi::ecs::Entity entity, int level)
 		{
 			item.name += ICON_FONT " ";
 		}
+		if (scene.voxel_grids.Contains(entity))
+		{
+			item.name += ICON_VOXELGRID " ";
+		}
 		if (scene.lights.Contains(entity))
 		{
 			const LightComponent* light = scene.lights.GetComponent(entity);
@@ -710,6 +726,9 @@ void OptionsWindow::RefreshEntityTree()
 
 bool OptionsWindow::CheckEntityFilter(wi::ecs::Entity entity)
 {
+	if (filter == Filter::All)
+		return true;
+
 	const Scene& scene = editor->GetCurrentScene();
 	bool valid = false;
 
@@ -737,7 +756,8 @@ bool OptionsWindow::CheckEntityFilter(wi::ecs::Entity entity)
 		has_flag(filter, Filter::Humanoid) && scene.humanoids.Contains(entity) ||
 		has_flag(filter, Filter::Video) && scene.videos.Contains(entity) ||
 		has_flag(filter, Filter::Sprite) && scene.sprites.Contains(entity) ||
-		has_flag(filter, Filter::Font) && scene.fonts.Contains(entity)
+		has_flag(filter, Filter::Font) && scene.fonts.Contains(entity) ||
+		has_flag(filter, Filter::VoxelGrid) && scene.voxel_grids.Contains(entity)
 		)
 	{
 		valid = true;

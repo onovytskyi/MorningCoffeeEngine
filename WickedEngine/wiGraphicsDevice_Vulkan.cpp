@@ -16,6 +16,8 @@
 #include "Utility/spirv_reflect.h"
 
 #define VMA_IMPLEMENTATION
+#define VMA_STATIC_VULKAN_FUNCTIONS 0
+#define VMA_DYNAMIC_VULKAN_FUNCTIONS 1
 #include "Utility/vk_mem_alloc.h"
 
 #ifdef SDL2
@@ -985,7 +987,8 @@ namespace vulkan_internal
 		VkSurfaceKHR surface = VK_NULL_HANDLE;
 
 		uint32_t swapChainImageIndex = 0;
-		VkSemaphore swapchainAcquireSemaphore = VK_NULL_HANDLE;
+		uint32_t swapChainAcquireSemaphoreIndex = 0;
+		wi::vector<VkSemaphore> swapchainAcquireSemaphores;
 		VkSemaphore swapchainReleaseSemaphore = VK_NULL_HANDLE;
 
 		ColorSpace colorSpace = ColorSpace::SRGB;
@@ -1002,6 +1005,7 @@ namespace vulkan_internal
 			for (size_t i = 0; i < swapChainImages.size(); ++i)
 			{
 				allocationhandler->destroyer_imageviews.push_back(std::make_pair(swapChainImageViews[i], framecount));
+				allocationhandler->destroyer_semaphores.push_back(std::make_pair(swapchainAcquireSemaphores[i], framecount));
 			}
 
 #ifdef SDL2
@@ -1013,7 +1017,6 @@ namespace vulkan_internal
 				allocationhandler->destroyer_swapchains.push_back(std::make_pair(swapChain, framecount));
 				allocationhandler->destroyer_surfaces.push_back(std::make_pair(surface, framecount));
 			}
-			allocationhandler->destroyer_semaphores.push_back(std::make_pair(swapchainAcquireSemaphore, framecount));
 			allocationhandler->destroyer_semaphores.push_back(std::make_pair(swapchainReleaseSemaphore, framecount));
 
 			allocationhandler->destroylocker.unlock();
@@ -1277,10 +1280,13 @@ namespace vulkan_internal
 		VkSemaphoreCreateInfo semaphoreInfo = {};
 		semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
 
-		if (internal_state->swapchainAcquireSemaphore == VK_NULL_HANDLE)
+		if (internal_state->swapchainAcquireSemaphores.empty())
 		{
-			res = vkCreateSemaphore(device, &semaphoreInfo, nullptr, &internal_state->swapchainAcquireSemaphore);
-			assert(res == VK_SUCCESS);
+			for (size_t i = 0; i < internal_state->swapChainImages.size(); ++i)
+			{
+				res = vkCreateSemaphore(device, &semaphoreInfo, nullptr, &internal_state->swapchainAcquireSemaphores.emplace_back());
+				assert(res == VK_SUCCESS);
+			}
 		}
 
 		if (internal_state->swapchainReleaseSemaphore == VK_NULL_HANDLE)
@@ -2326,6 +2332,7 @@ using namespace vulkan_internal;
 	GraphicsDevice_Vulkan::GraphicsDevice_Vulkan(wi::platform::window_type window, ValidationMode validationMode_, GPUPreference preference)
 	{
 		wi::Timer timer;
+		capabilities |= GraphicsDeviceCapability::ALIASING_GENERIC;
 
 		// This functionalty is missing from Vulkan but might be added in the future:
 		//	Issue: https://github.com/KhronosGroup/Vulkan-Docs/issues/2079
@@ -2653,6 +2660,22 @@ using namespace vulkan_internal;
 					h264_decode_extension = true;
 				}
 
+#if defined(VK_USE_PLATFORM_WIN32_KHR)
+				if (checkExtensionSupport(VK_KHR_EXTERNAL_MEMORY_WIN32_EXTENSION_NAME, available_deviceExtensions) &&
+					checkExtensionSupport(VK_KHR_EXTERNAL_SEMAPHORE_WIN32_EXTENSION_NAME, available_deviceExtensions))
+				{
+					enabled_deviceExtensions.push_back(VK_KHR_EXTERNAL_MEMORY_WIN32_EXTENSION_NAME);
+					enabled_deviceExtensions.push_back(VK_KHR_EXTERNAL_SEMAPHORE_WIN32_EXTENSION_NAME);
+				}
+#elif defined(__linux__)
+				if (checkExtensionSupport(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME, available_deviceExtensions) &&
+					checkExtensionSupport(VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME, available_deviceExtensions))
+				{
+					enabled_deviceExtensions.push_back(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
+					enabled_deviceExtensions.push_back(VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME);
+				}
+#endif
+
 				*properties_chain = nullptr;
 				*features_chain = nullptr;
 				vkGetPhysicalDeviceProperties2(dev, &properties2);
@@ -2818,7 +2841,6 @@ using namespace vulkan_internal;
 				{
 					capabilities |= GraphicsDeviceCapability::SPARSE_TEXTURE3D;
 				}
-				capabilities |= GraphicsDeviceCapability::GENERIC_SPARSE_TILE_POOL;
 			}
 
 			if (
@@ -3042,27 +3064,6 @@ using namespace vulkan_internal;
 		allocationhandler->instance = instance;
 
 		// Initialize Vulkan Memory Allocator helper:
-		VmaVulkanFunctions vma_vulkan_func{};
-		vma_vulkan_func.vkGetInstanceProcAddr = vkGetInstanceProcAddr;
-		vma_vulkan_func.vkGetDeviceProcAddr = vkGetDeviceProcAddr;
-		vma_vulkan_func.vkGetPhysicalDeviceProperties = vkGetPhysicalDeviceProperties;
-		vma_vulkan_func.vkGetPhysicalDeviceMemoryProperties = vkGetPhysicalDeviceMemoryProperties;
-		vma_vulkan_func.vkAllocateMemory = vkAllocateMemory;
-		vma_vulkan_func.vkFreeMemory = vkFreeMemory;
-		vma_vulkan_func.vkMapMemory = vkMapMemory;
-		vma_vulkan_func.vkUnmapMemory = vkUnmapMemory;
-		vma_vulkan_func.vkFlushMappedMemoryRanges = vkFlushMappedMemoryRanges;
-		vma_vulkan_func.vkInvalidateMappedMemoryRanges = vkInvalidateMappedMemoryRanges;
-		vma_vulkan_func.vkBindBufferMemory = vkBindBufferMemory;
-		vma_vulkan_func.vkBindImageMemory = vkBindImageMemory;
-		vma_vulkan_func.vkGetBufferMemoryRequirements = vkGetBufferMemoryRequirements;
-		vma_vulkan_func.vkGetImageMemoryRequirements = vkGetImageMemoryRequirements;
-		vma_vulkan_func.vkCreateBuffer = vkCreateBuffer;
-		vma_vulkan_func.vkDestroyBuffer = vkDestroyBuffer;
-		vma_vulkan_func.vkCreateImage = vkCreateImage;
-		vma_vulkan_func.vkDestroyImage = vkDestroyImage;
-		vma_vulkan_func.vkCmdCopyBuffer = vkCmdCopyBuffer;
-
 		VmaAllocatorCreateInfo allocatorInfo = {};
 		allocatorInfo.physicalDevice = physicalDevice;
 		allocatorInfo.device = device;
@@ -3072,22 +3073,40 @@ using namespace vulkan_internal;
 		allocatorInfo.flags =
 			VMA_ALLOCATOR_CREATE_KHR_DEDICATED_ALLOCATION_BIT |
 			VMA_ALLOCATOR_CREATE_KHR_BIND_MEMORY2_BIT;
-		vma_vulkan_func.vkGetBufferMemoryRequirements2KHR = vkGetBufferMemoryRequirements2;
-		vma_vulkan_func.vkGetImageMemoryRequirements2KHR = vkGetImageMemoryRequirements2;
 
 		if (features_1_2.bufferDeviceAddress)
 		{
 			allocatorInfo.flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
-			vma_vulkan_func.vkBindBufferMemory2KHR = vkBindBufferMemory2;
-			vma_vulkan_func.vkBindImageMemory2KHR = vkBindImageMemory2;
 		}
-		allocatorInfo.pVulkanFunctions = &vma_vulkan_func;
 
+#if VMA_DYNAMIC_VULKAN_FUNCTIONS
+		static VmaVulkanFunctions vulkanFunctions = {};
+		vulkanFunctions.vkGetInstanceProcAddr = vkGetInstanceProcAddr;
+		vulkanFunctions.vkGetDeviceProcAddr = vkGetDeviceProcAddr;
+		allocatorInfo.pVulkanFunctions = &vulkanFunctions;
+#endif
 		res = vmaCreateAllocator(&allocatorInfo, &allocationhandler->allocator);
 		assert(res == VK_SUCCESS);
 		if (res != VK_SUCCESS)
 		{
 			wi::helper::messageBox("vmaCreateAllocator failed! ERROR: " + std::to_string(res), "Error!");
+			wi::platform::Exit();
+		}
+
+		std::vector<VkExternalMemoryHandleTypeFlags> externalMemoryHandleTypes;
+#if defined(VK_USE_PLATFORM_WIN32_KHR)
+		externalMemoryHandleTypes.resize(memory_properties_2.memoryProperties.memoryTypeCount, VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT);
+		allocatorInfo.pTypeExternalMemoryHandleTypes = externalMemoryHandleTypes.data();
+#elif defined(__linux__)
+		externalMemoryHandleTypes.resize(memory_properties_2.memoryProperties.memoryTypeCount, VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT);
+		allocatorInfo.pTypeExternalMemoryHandleTypes = externalMemoryHandleTypes.data();
+#endif
+
+		res = vmaCreateAllocator(&allocatorInfo, &allocationhandler->externalAllocator);
+		assert(res == VK_SUCCESS);
+		if (res != VK_SUCCESS)
+		{
+			wi::helper::messageBox("Failed to create Vulkan external memory allocator, ERROR: " + std::to_string(res), "Error!");
 			wi::platform::Exit();
 		}
 
@@ -3681,7 +3700,7 @@ using namespace vulkan_internal;
 
 		return success;
 	}
-	bool GraphicsDevice_Vulkan::CreateBuffer2(const GPUBufferDesc* desc, const std::function<void(void*)>& init_callback, GPUBuffer* buffer) const
+	bool GraphicsDevice_Vulkan::CreateBuffer2(const GPUBufferDesc* desc, const std::function<void(void*)>& init_callback, GPUBuffer* buffer, const GPUResource* alias, uint64_t alias_offset) const
 	{
 		auto internal_state = std::make_shared<Buffer_Vulkan>();
 		internal_state->allocationhandler = allocationhandler;
@@ -3775,9 +3794,9 @@ using namespace vulkan_internal;
 
 		VkResult res;
 
-		if (has_flag(desc->misc_flags, ResourceMiscFlag::SPARSE_TILE_POOL_BUFFER) ||
-			has_flag(desc->misc_flags, ResourceMiscFlag::SPARSE_TILE_POOL_TEXTURE_NON_RT_DS) ||
-			has_flag(desc->misc_flags, ResourceMiscFlag::SPARSE_TILE_POOL_TEXTURE_RT_DS))
+		if (has_flag(desc->misc_flags, ResourceMiscFlag::ALIASING_BUFFER) ||
+			has_flag(desc->misc_flags, ResourceMiscFlag::ALIASING_TEXTURE_NON_RT_DS) ||
+			has_flag(desc->misc_flags, ResourceMiscFlag::ALIASING_TEXTURE_RT_DS))
 		{
 			VkMemoryRequirements memory_requirements = {};
 			memory_requirements.alignment = desc->alignment;
@@ -3847,7 +3866,43 @@ using namespace vulkan_internal;
 				allocInfo.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
 			}
 
-			res = vmaCreateBuffer(allocationhandler->allocator, &bufferInfo, &allocInfo, &internal_state->resource, &internal_state->allocation, nullptr);
+			if (alias == nullptr)
+			{
+				res = vmaCreateBuffer(
+					allocationhandler->allocator,
+					&bufferInfo,
+					&allocInfo,
+					&internal_state->resource,
+					&internal_state->allocation,
+					nullptr
+				);
+			}
+			else
+			{
+				// Aliasing: https://gpuopen-librariesandsdks.github.io/VulkanMemoryAllocator/html/resource_aliasing.html
+				if (alias->IsTexture())
+				{
+					auto alias_internal = to_internal((const Texture*)alias);
+					res = vmaCreateAliasingBuffer2(
+						allocationhandler->allocator,
+						alias_internal->allocation,
+						alias_offset,
+						&bufferInfo,
+						&internal_state->resource
+					);
+				}
+				else
+				{
+					auto alias_internal = to_internal((const GPUBuffer*)alias);
+					res = vmaCreateAliasingBuffer2(
+						allocationhandler->allocator,
+						alias_internal->allocation,
+						alias_offset,
+						&bufferInfo,
+						&internal_state->resource
+					);
+				}
+			}
 			assert(res == VK_SUCCESS);
 		}
 
@@ -3971,7 +4026,7 @@ using namespace vulkan_internal;
 
 		return res == VK_SUCCESS;
 	}
-	bool GraphicsDevice_Vulkan::CreateTexture(const TextureDesc* desc, const SubresourceData* initial_data, Texture* texture) const
+	bool GraphicsDevice_Vulkan::CreateTexture(const TextureDesc* desc, const SubresourceData* initial_data, Texture* texture, const GPUResource* alias, uint64_t alias_offset) const
 	{
 		auto internal_state = std::make_shared<Texture_Vulkan>();
 		internal_state->allocationhandler = allocationhandler;
@@ -4119,7 +4174,6 @@ using namespace vulkan_internal;
 
 		if (has_flag(texture->desc.misc_flags, ResourceMiscFlag::SPARSE))
 		{
-			assert(CheckCapability(GraphicsDeviceCapability::GENERIC_SPARSE_TILE_POOL));
 			assert(CheckCapability(GraphicsDeviceCapability::SPARSE_TEXTURE2D) || imageInfo.imageType != VK_IMAGE_TYPE_2D);
 			assert(CheckCapability(GraphicsDeviceCapability::SPARSE_TEXTURE3D) || imageInfo.imageType != VK_IMAGE_TYPE_3D);
 			imageInfo.flags |= VK_IMAGE_CREATE_SPARSE_BINDING_BIT;
@@ -4251,8 +4305,88 @@ using namespace vulkan_internal;
 			}
 			else
 			{
-				res = vmaCreateImage(allocationhandler->allocator, &imageInfo, &allocInfo, &internal_state->resource, &internal_state->allocation, nullptr);
+				VmaAllocator allocator = allocationhandler->allocator;
+				VkExternalMemoryImageCreateInfo externalMemImageCreateInfo = {};
+
+				if (has_flag(texture->desc.misc_flags, ResourceMiscFlag::SHARED))
+				{
+					externalMemImageCreateInfo.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO;
+#if defined(VK_USE_PLATFORM_WIN32_KHR)
+					// TODO: Expose this? should we use VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D12_RESOURCE_BIT?
+					externalMemImageCreateInfo.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT;
+#else
+					externalMemImageCreateInfo.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
+#endif
+					imageInfo.pNext = &externalMemImageCreateInfo;
+
+					// We have to use a dedicated allocator for external handles that has been created with VkExportMemoryAllocateInfo
+					allocator = allocationhandler->externalAllocator;
+
+					allocInfo.flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
+				}
+
+				if (alias == nullptr)
+				{
+					res = vmaCreateImage(
+						allocator,
+						&imageInfo,
+						&allocInfo,
+						&internal_state->resource,
+						&internal_state->allocation,
+						nullptr
+					);
+				}
+				else
+				{
+					// Aliasing: https://gpuopen-librariesandsdks.github.io/VulkanMemoryAllocator/html/resource_aliasing.html
+					if (alias->IsTexture())
+					{
+						auto alias_internal = to_internal((const Texture*)alias);
+						res = vmaCreateAliasingImage2(
+							allocator,
+							alias_internal->allocation,
+							alias_offset,
+							&imageInfo,
+							&internal_state->resource
+						);
+					}
+					else
+					{
+						auto alias_internal = to_internal((const GPUBuffer*)alias);
+						res = vmaCreateAliasingImage2(
+							allocator,
+							alias_internal->allocation,
+							alias_offset,
+							&imageInfo,
+							&internal_state->resource
+						);
+					}
+				}
 				assert(res == VK_SUCCESS);
+
+				if (has_flag(texture->desc.misc_flags, ResourceMiscFlag::SHARED))
+				{
+					VmaAllocationInfo allocationInfo;
+					vmaGetAllocationInfo(allocator, internal_state->allocation, &allocationInfo);
+
+#if defined(VK_USE_PLATFORM_WIN32_KHR)
+					VkMemoryGetWin32HandleInfoKHR getWin32HandleInfoKHR = {};
+					getWin32HandleInfoKHR.sType = VK_STRUCTURE_TYPE_MEMORY_GET_WIN32_HANDLE_INFO_KHR;
+					getWin32HandleInfoKHR.pNext = nullptr;
+					getWin32HandleInfoKHR.memory = allocationInfo.deviceMemory;
+					getWin32HandleInfoKHR.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT_KHR;
+					res = vkGetMemoryWin32HandleKHR(allocationhandler->device, &getWin32HandleInfoKHR, &texture->shared_handle);
+					assert(res == VK_SUCCESS);
+#elif defined(__linux__)
+					VkMemoryGetFdInfoKHR memoryGetFdInfoKHR = {};
+					memoryGetFdInfoKHR.sType = VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR;
+					memoryGetFdInfoKHR.pNext = nullptr;
+					memoryGetFdInfoKHR.memory = allocationInfo.deviceMemory;
+					memoryGetFdInfoKHR.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT_KHR;
+					res = vkGetMemoryFdKHR(allocationhandler->device, &memoryGetFdInfoKHR, &texture->shared_handle);
+					assert(res == VK_SUCCESS);
+#endif
+				}
 			}
 		}
 
@@ -6994,7 +7128,7 @@ using namespace vulkan_internal;
 
 					VkSemaphoreSubmitInfo& waitSemaphore = queue.submit_waitSemaphoreInfos.emplace_back();
 					waitSemaphore.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
-					waitSemaphore.semaphore = internal_state->swapchainAcquireSemaphore;
+					waitSemaphore.semaphore = internal_state->swapchainAcquireSemaphores[internal_state->swapChainAcquireSemaphoreIndex];
 					waitSemaphore.value = 0; // not a timeline semaphore
 					waitSemaphore.stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
 
@@ -7388,12 +7522,14 @@ using namespace vulkan_internal;
 		commandlist.renderpass_barriers_end.clear();
 		auto internal_state = to_internal(swapchain);
 
+		internal_state->swapChainAcquireSemaphoreIndex = (internal_state->swapChainAcquireSemaphoreIndex + 1) % internal_state->swapchainAcquireSemaphores.size();
+
 		internal_state->locker.lock();
 		VkResult res = vkAcquireNextImageKHR(
 			device,
 			internal_state->swapChain,
 			UINT64_MAX,
-			internal_state->swapchainAcquireSemaphore,
+			internal_state->swapchainAcquireSemaphores[internal_state->swapChainAcquireSemaphoreIndex],
 			VK_NULL_HANDLE,
 			&internal_state->swapChainImageIndex
 		);
@@ -7411,9 +7547,12 @@ using namespace vulkan_internal;
 				// https://www.khronos.org/blog/resolving-longstanding-issues-with-wsi
 				{
 					std::scoped_lock lock(allocationhandler->destroylocker);
-					allocationhandler->destroyer_semaphores.emplace_back(internal_state->swapchainAcquireSemaphore, allocationhandler->framecount);
+					for (auto& x : internal_state->swapchainAcquireSemaphores)
+					{
+						allocationhandler->destroyer_semaphores.emplace_back(x, allocationhandler->framecount);
+					}
 				}
-				internal_state->swapchainAcquireSemaphore = VK_NULL_HANDLE;
+				internal_state->swapchainAcquireSemaphores.clear();
 				if (CreateSwapChainInternal(internal_state, physicalDevice, device, allocationhandler))
 				{
 					RenderPassBegin(swapchain, cmd);
@@ -8556,6 +8695,7 @@ using namespace vulkan_internal;
 			{
 			default:
 			case GPUBarrier::Type::MEMORY:
+			case GPUBarrier::Type::ALIASING:
 			{
 				VkMemoryBarrier2 barrierdesc = {};
 				barrierdesc.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2;

@@ -60,7 +60,6 @@ namespace wi
 		}
 
 		// Fade manager will activate on fadeout
-		fadeManager.Clear();
 		fadeManager.Start(fadeSeconds, fadeColor, [this, component]() {
 
 			if (GetActivePath() != nullptr)
@@ -108,22 +107,6 @@ namespace wi
 			graphicsDevice->SubmitCommandLists();
 			return;
 		}
-
-#if 0
-#ifdef WICKEDENGINE_BUILD_DX12
-		static bool startup_workaround = false;
-		if (!startup_workaround)
-		{
-			startup_workaround = true;
-			if (dynamic_cast<GraphicsDevice_DX12*>(graphicsDevice.get()))
-			{
-				CommandList cmd = graphicsDevice->BeginCommandList();
-				wi::renderer::Workaround(1, cmd);
-				graphicsDevice->SubmitCommandLists();
-			}
-		}
-#endif // WICKEDENGINE_BUILD_DX12
-#endif
 
 		static bool startup_script = false;
 		if (!startup_script)
@@ -333,7 +316,7 @@ namespace wi
 			fx.enableFullScreen();
 			fx.color = fadeManager.color;
 			fx.opacity = fadeManager.opacity;
-			wi::image::Draw(wi::texturehelper::getWhite(), fx, cmd);
+			wi::image::Draw(nullptr, fx, cmd);
 		}
 
 		// Draw the information display
@@ -535,7 +518,7 @@ namespace wi
 			}
 		}
 
-		wi::profiler::DrawData(canvas, 4, 120, cmd, colorspace);
+		wi::profiler::DrawData(canvas, 4, 10, cmd, colorspace);
 
 		wi::backlog::Draw(canvas, cmd, colorspace);
 
@@ -630,6 +613,7 @@ namespace wi
 		}
 		wi::graphics::GetDevice() = graphicsDevice.get();
 
+		rendertarget = {};
 		canvas.init(window);
 
 		SwapChainDesc desc;

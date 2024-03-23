@@ -100,7 +100,6 @@ void Editor::Initialize()
 	loader.addLoadingComponent(&renderComponent, this, 0.2f);
 
 	ActivatePath(&loader);
-
 }
 
 void EditorLoadingScreen::Load()
@@ -214,6 +213,9 @@ void EditorComponent::ResizeLayout()
 	aboutWindow.SetSize(XMFLOAT2(screenW / 2.0f, screenH / 1.5f));
 	aboutWindow.SetPos(XMFLOAT2(screenW / 2.0f - aboutWindow.scale.x / 2.0f, screenH / 2.0f - aboutWindow.scale.y / 2.0f));
 
+	contentBrowserWnd.SetSize(XMFLOAT2(screenW / 1.6f, screenH / 1.2f));
+	contentBrowserWnd.SetPos(XMFLOAT2(screenW / 2.0f - contentBrowserWnd.scale.x / 2.0f, screenH / 2.0f - contentBrowserWnd.scale.y / 2.0f));
+
 }
 void EditorComponent::Load()
 {
@@ -293,6 +295,15 @@ void EditorComponent::Load()
 		}
 	});
 	GetGUI().AddWidget(&dummyButton);
+
+	navtestButton.Create(ICON_NAVIGATION);
+	navtestButton.SetShadowRadius(2);
+	navtestButton.SetTooltip("Toggle navigation testing. When enabled, you can visualize path finding results.\nYou can put down START and GOAL waypoints inside voxel grids to test path finding.\nControls:\n----------\nF5 + left click: put START to surface\nF6 + left click: put GOAL to surface\nF7 + left click: put START to air\nF8 + left click: put GOAL to air");
+	navtestButton.SetLocalizationEnabled(wi::gui::LocalizationEnabled::Tooltip);
+	navtestButton.OnClick([&](wi::gui::EventArgs args) {
+		navtest_enabled = !navtest_enabled;
+	});
+	GetGUI().AddWidget(&navtestButton);
 
 	playButton.Create(ICON_PLAY);
 	playButton.font.params.shadowColor = wi::Color::Transparent();
@@ -405,6 +416,23 @@ void EditorComponent::Load()
 			});
 		});
 	GetGUI().AddWidget(&openButton);
+
+
+	contentBrowserButton.Create("Content Browser");
+	contentBrowserButton.SetLocalizationEnabled(wi::gui::LocalizationEnabled::Tooltip);
+	contentBrowserButton.SetShadowRadius(2);
+	contentBrowserButton.font.params.shadowColor = wi::Color::Transparent();
+	contentBrowserButton.SetTooltip("Browse sample content.");
+	contentBrowserButton.SetColor(wi::Color(50, 100, 255, 180), wi::gui::WIDGETSTATE::IDLE);
+	contentBrowserButton.SetColor(wi::Color(120, 160, 255, 255), wi::gui::WIDGETSTATE::FOCUS);
+	contentBrowserButton.OnClick([&](wi::gui::EventArgs args) {
+		contentBrowserWnd.SetVisible(!contentBrowserWnd.IsVisible());
+		if (contentBrowserWnd.IsVisible())
+		{
+			contentBrowserWnd.RefreshContent();
+		}
+	});
+	GetGUI().AddWidget(&contentBrowserButton);
 
 
 	logButton.Create("Backlog");
@@ -651,6 +679,9 @@ void EditorComponent::Load()
 	profilerWnd.Create();
 	GetGUI().AddWidget(&profilerWnd);
 
+	contentBrowserWnd.Create(this);
+	GetGUI().AddWidget(&contentBrowserWnd);
+
 	std::string theme = main->config.GetSection("options").GetText("theme");
 	if(theme.empty())
 	{
@@ -685,6 +716,14 @@ void EditorComponent::Load()
 		wi::helper::FileRead(filename, font_datas.back().filedata);
 	};
 	wi::helper::GetFileNamesInDirectory("fonts/", load_font, "TTF");
+
+	size_t current_recent = 0;
+	auto& recent = main->config.GetSection("recent");
+	while (recent.Has(std::to_string(current_recent).c_str()))
+	{
+		recentFilenames.push_back(recent.GetText(std::to_string(current_recent).c_str()));
+		current_recent++;
+	}
 
 	RenderPath2D::Load();
 }
@@ -923,7 +962,7 @@ void EditorComponent::Update(float dt)
 		inspector_mode = wi::input::Down((wi::input::BUTTON)'I');
 
 		// Begin picking:
-		Ray pickRay = wi::renderer::GetPickRay((long)currentMouse.x, (long)currentMouse.y, *this, camera);
+		pickRay = wi::renderer::GetPickRay((long)currentMouse.x, (long)currentMouse.y, *this, camera);
 		{
 			hovered = wi::scene::PickResult();
 
@@ -1136,6 +1175,25 @@ void EditorComponent::Update(float dt)
 				for (size_t i = 0; i < scene.videos.GetCount(); ++i)
 				{
 					Entity entity = scene.videos.GetEntity(i);
+					if (!scene.transforms.Contains(entity))
+						continue;
+					const TransformComponent& transform = *scene.transforms.GetComponent(entity);
+
+					XMVECTOR disV = XMVector3LinePointDistance(XMLoadFloat3(&pickRay.origin), XMLoadFloat3(&pickRay.origin) + XMLoadFloat3(&pickRay.direction), transform.GetPositionV());
+					float dis = XMVectorGetX(disV);
+					if (dis > 0.01f && dis < wi::math::Distance(transform.GetPosition(), pickRay.origin) * 0.05f && dis < hovered.distance)
+					{
+						hovered = wi::scene::PickResult();
+						hovered.entity = entity;
+						hovered.distance = dis;
+					}
+				}
+			}
+			if (has_flag(optionsWnd.filter, OptionsWindow::Filter::VoxelGrid))
+			{
+				for (size_t i = 0; i < scene.voxel_grids.GetCount(); ++i)
+				{
+					Entity entity = scene.voxel_grids.GetEntity(i);
 					if (!scene.transforms.Contains(entity))
 						continue;
 					const TransformComponent& transform = *scene.transforms.GetComponent(entity);
@@ -1701,6 +1759,7 @@ void EditorComponent::Update(float dt)
 		componentsWnd.terrainWnd.SetEntity(INVALID_ENTITY);
 		componentsWnd.spriteWnd.SetEntity(INVALID_ENTITY);
 		componentsWnd.fontWnd.SetEntity(INVALID_ENTITY);
+		componentsWnd.voxelGridWnd.SetEntity(INVALID_ENTITY);
 	}
 	else
 	{
@@ -1734,6 +1793,7 @@ void EditorComponent::Update(float dt)
 		componentsWnd.terrainWnd.SetEntity(picked.entity);
 		componentsWnd.spriteWnd.SetEntity(picked.entity);
 		componentsWnd.fontWnd.SetEntity(picked.entity);
+		componentsWnd.voxelGridWnd.SetEntity(picked.entity);
 
 		if (picked.subsetIndex >= 0)
 		{
@@ -1902,6 +1962,75 @@ void EditorComponent::Update(float dt)
 	renderPath->colorspace = colorspace;
 	renderPath->Update(dt);
 
+	if (navtest_enabled)
+	{
+		if (hovered.entity != INVALID_ENTITY && wi::input::Down(wi::input::KEYBOARD_BUTTON_F5))
+		{
+			navtest_start_pick = hovered;
+		}
+		if (hovered.entity != INVALID_ENTITY && wi::input::Down(wi::input::KEYBOARD_BUTTON_F6))
+		{
+			navtest_goal_pick = hovered;
+		}
+		if (wi::input::Down(wi::input::KEYBOARD_BUTTON_F7) && wi::input::Down(wi::input::MOUSE_BUTTON_LEFT))
+		{
+			navtest_start_pick.entity = INVALID_ENTITY;
+			XMStoreFloat3(&navtest_start_pick.position, XMLoadFloat3(&pickRay.origin) + XMLoadFloat3(&pickRay.direction) * 2);
+		}
+		if (wi::input::Down(wi::input::KEYBOARD_BUTTON_F8) && wi::input::Down(wi::input::MOUSE_BUTTON_LEFT))
+		{
+			navtest_goal_pick.entity = INVALID_ENTITY;
+			XMStoreFloat3(&navtest_goal_pick.position, XMLoadFloat3(&pickRay.origin) + XMLoadFloat3(&pickRay.direction) * 2);
+		}
+
+		navtest_pathquery.flying = false;
+		if (
+			navtest_start_pick.entity != INVALID_ENTITY &&
+			navtest_goal_pick.entity != INVALID_ENTITY
+			)
+		{
+			navtest_start_pick.position = scene.GetPositionOnSurface(
+				navtest_start_pick.entity,
+				navtest_start_pick.vertexID0,
+				navtest_start_pick.vertexID1,
+				navtest_start_pick.vertexID2,
+				navtest_start_pick.bary
+			);
+			navtest_goal_pick.position = scene.GetPositionOnSurface(
+				navtest_goal_pick.entity,
+				navtest_goal_pick.vertexID0,
+				navtest_goal_pick.vertexID1,
+				navtest_goal_pick.vertexID2,
+				navtest_goal_pick.bary
+			);
+		}
+		else if(
+			navtest_start_pick.entity == INVALID_ENTITY &&
+			navtest_goal_pick.entity == INVALID_ENTITY
+			)
+		{
+			navtest_pathquery.flying = true;
+		}
+
+		for (size_t i = 0; i < scene.voxel_grids.GetCount(); ++i)
+		{
+			const wi::VoxelGrid& voxelgrid = scene.voxel_grids[i];
+			AABB aabb = voxelgrid.get_aabb();
+			if (aabb.intersects(navtest_start_pick.position) && aabb.intersects(navtest_goal_pick.position))
+			{
+				auto range = wi::profiler::BeginRangeCPU("NAVTEST PATHQUERY");
+				navtest_pathquery.process(
+					navtest_start_pick.position,
+					navtest_goal_pick.position,
+					voxelgrid
+				);
+				wi::profiler::EndRange(range);
+				wi::renderer::DrawPathQuery(&navtest_pathquery);
+				break;
+			}
+		}
+
+	}
 
 	bool force_collider_visualizer = false;
 	for (auto& x : translator.selected)
@@ -1925,6 +2054,31 @@ void EditorComponent::PostUpdate()
 	RenderPath2D::PostUpdate();
 
 	renderPath->PostUpdate();
+
+	// This needs to be after scene was updated fully by EditorComponent's renderPath
+	//	Because this will just render the scene without updating its resources
+	if (renderPath->getSceneUpdateEnabled()) // only update preview if scene was updated at all by main renderPath
+	{
+		componentsWnd.cameraComponentWnd.preview.RenderPreview();
+	}
+
+	const Scene& scene = GetCurrentScene();
+	if (componentsWnd.voxelGridWnd.debugAllCheckBox.GetCheck())
+	{
+		// Draw all voxel grids:
+		for (size_t i = 0; i < scene.voxel_grids.GetCount(); ++i)
+		{
+			wi::renderer::DrawVoxelGrid(&scene.voxel_grids[i]);
+		}
+	}
+	else
+	{
+		// Draw only selected:
+		if (scene.voxel_grids.Contains(componentsWnd.voxelGridWnd.entity))
+		{
+			wi::renderer::DrawVoxelGrid(scene.voxel_grids.GetComponent(componentsWnd.voxelGridWnd.entity));
+		}
+	}
 }
 void EditorComponent::Render() const
 {
@@ -2108,7 +2262,7 @@ void EditorComponent::Render() const
 
 				// Draw solid blocks of selected materials
 				fx.stencilRef = EDITORSTENCILREF_HIGHLIGHT_MATERIAL;
-				wi::image::Draw(wi::texturehelper::getWhite(), fx, cmd);
+				wi::image::Draw(nullptr, fx, cmd);
 
 				device->RenderPassEnd(cmd);
 			}
@@ -2143,7 +2297,7 @@ void EditorComponent::Render() const
 
 				// Draw solid blocks of selected objects
 				fx.stencilRef = EDITORSTENCILREF_HIGHLIGHT_OBJECT;
-				wi::image::Draw(wi::texturehelper::getWhite(), fx, cmd);
+				wi::image::Draw(nullptr, fx, cmd);
 
 				device->RenderPassEnd(cmd);
 			}
@@ -2734,6 +2888,36 @@ void EditorComponent::Render() const
 
 
 					wi::font::Draw(ICON_VIDEO, fp, cmd);
+				}
+			}
+			if (has_flag(optionsWnd.filter, OptionsWindow::Filter::VoxelGrid))
+			{
+				for (size_t i = 0; i < scene.voxel_grids.GetCount(); ++i)
+				{
+					Entity entity = scene.voxel_grids.GetEntity(i);
+					if (!scene.transforms.Contains(entity))
+						continue;
+					const TransformComponent& transform = *scene.transforms.GetComponent(entity);
+
+					fp.position = transform.GetPosition();
+					fp.scaling = scaling * wi::math::Distance(transform.GetPosition(), camera.Eye);
+					fp.color = inactiveEntityColor;
+
+					if (hovered.entity == entity)
+					{
+						fp.color = hoveredEntityColor;
+					}
+					for (auto& picked : translator.selected)
+					{
+						if (picked.entity == entity)
+						{
+							fp.color = selectedEntityColor;
+							break;
+						}
+					}
+
+
+					wi::font::Draw(ICON_VOXELGRID, fp, cmd);
 				}
 			}
 			if (bone_picking)
@@ -3456,6 +3640,32 @@ void EditorComponent::ConsumeHistoryOperation(bool undo)
 	optionsWnd.RefreshEntityTree();
 }
 
+void EditorComponent::RegisterRecentlyUsed(const std::string& filename)
+{
+	for (size_t i = 0; i < recentFilenames.size();)
+	{
+		if (recentFilenames[i].compare(filename) == 0)
+		{
+			recentFilenames.erase(recentFilenames.begin() + i);
+		}
+		else
+		{
+			i++;
+		}
+	}
+	while (recentFilenames.size() >= maxRecentFilenames)
+	{
+		recentFilenames.erase(recentFilenames.begin());
+	}
+	recentFilenames.push_back(filename);
+	auto& recent = main->config.GetSection("recent");
+	for (size_t i = 0; i < recentFilenames.size(); ++i)
+	{
+		recent.Set(std::to_string(i).c_str(), recentFilenames[i]);
+	}
+	main->config.Commit();
+}
+
 void EditorComponent::Open(const std::string& filename)
 {
 	std::string extension = wi::helper::toUpper(wi::helper::GetExtensionFromFileName(filename));
@@ -3477,6 +3687,7 @@ void EditorComponent::Open(const std::string& filename)
 		playButton.SetScriptTip("dofile(\"" + last_script_path + "\")");
 		wi::lua::RunFile(filename);
 		optionsWnd.RefreshEntityTree();
+		RegisterRecentlyUsed(filename);
 		return;
 	}
 	if (type == FileType::VIDEO)
@@ -3513,6 +3724,8 @@ void EditorComponent::Open(const std::string& filename)
 		optionsWnd.RefreshEntityTree();
 		return;
 	}
+
+	RegisterRecentlyUsed(filename);
 
 	size_t camera_count_prev = GetCurrentScene().cameras.GetCount();
 
@@ -3633,6 +3846,8 @@ void EditorComponent::Save(const std::string& filename)
 	GetCurrentEditorScene().path = filename;
 	RefreshSceneList();
 
+	RegisterRecentlyUsed(filename);
+
 	PostSaveText("Scene saved: ", GetCurrentEditorScene().path);
 }
 void EditorComponent::SaveAs()
@@ -3744,6 +3959,18 @@ void EditorComponent::UpdateTopMenuAnimation()
 		openButton.SetText(openButton.GetState() > wi::gui::WIDGETSTATE::IDLE ? ICON_OPEN " Open" : ICON_OPEN);
 	}
 
+	if (contentBrowserButton.GetState() > wi::gui::WIDGETSTATE::IDLE && current_localization.Get((size_t)EditorLocalization::ContentBrowser) != nullptr)
+	{
+		tmp = ICON_CONTENT_BROWSER " ";
+		tmp += current_localization.Get((size_t)EditorLocalization::ContentBrowser);
+		contentBrowserButton.SetText(tmp);
+	}
+	else
+	{
+		contentBrowserButton.SetText(contentBrowserButton.GetState() > wi::gui::WIDGETSTATE::IDLE ? ICON_CONTENT_BROWSER " Content" : ICON_CONTENT_BROWSER);
+	}
+
+
 	if (logButton.GetState() > wi::gui::WIDGETSTATE::IDLE && current_localization.Get((size_t)EditorLocalization::Backlog) != nullptr)
 	{
 		tmp = ICON_BACKLOG " ";
@@ -3844,6 +4071,7 @@ void EditorComponent::UpdateTopMenuAnimation()
 	profilerButton.SetSize(XMFLOAT2(wi::math::Lerp(profilerButton.GetSize().x, profilerButton.GetState() > wi::gui::WIDGETSTATE::IDLE ? wid_focus : wid_idle, lerp), hei));
 	cinemaButton.SetSize(XMFLOAT2(wi::math::Lerp(cinemaButton.GetSize().x, cinemaButton.GetState() > wi::gui::WIDGETSTATE::IDLE ? wid_focus : wid_idle, lerp), hei));
 	logButton.SetSize(XMFLOAT2(wi::math::Lerp(logButton.GetSize().x, logButton.GetState() > wi::gui::WIDGETSTATE::IDLE ? wid_focus : wid_idle, lerp), hei));
+	contentBrowserButton.SetSize(XMFLOAT2(wi::math::Lerp(contentBrowserButton.GetSize().x, contentBrowserButton.GetState() > wi::gui::WIDGETSTATE::IDLE ? wid_focus : wid_idle, lerp), hei));
 	openButton.SetSize(XMFLOAT2(wi::math::Lerp(openButton.GetSize().x, openButton.GetState() > wi::gui::WIDGETSTATE::IDLE ? wid_focus : wid_idle, lerp), hei));
 	saveButton.SetSize(XMFLOAT2(wi::math::Lerp(saveButton.GetSize().x, saveButton.GetState() > wi::gui::WIDGETSTATE::IDLE ? wid_focus : wid_idle, lerp), hei));
 
@@ -3854,17 +4082,20 @@ void EditorComponent::UpdateTopMenuAnimation()
 	cinemaButton.SetPos(XMFLOAT2(fullscreenButton.GetPos().x - cinemaButton.GetSize().x - padding, 0));
 	profilerButton.SetPos(XMFLOAT2(cinemaButton.GetPos().x - profilerButton.GetSize().x - padding, 0));
 	logButton.SetPos(XMFLOAT2(profilerButton.GetPos().x - logButton.GetSize().x - padding, 0));
-	openButton.SetPos(XMFLOAT2(logButton.GetPos().x - openButton.GetSize().x - padding, 0));
+	contentBrowserButton.SetPos(XMFLOAT2(logButton.GetPos().x - contentBrowserButton.GetSize().x - padding, 0));
+	openButton.SetPos(XMFLOAT2(contentBrowserButton.GetPos().x - openButton.GetSize().x - padding, 0));
 	saveButton.SetPos(XMFLOAT2(openButton.GetPos().x - saveButton.GetSize().x - padding, 0));
 
 
-	float static_pos = screenW - wid_idle * 11;
+	float static_pos = screenW - wid_idle * 12;
 
 	dummyButton.SetSize(XMFLOAT2(wid_idle * 0.75f, hei));
 	dummyButton.SetPos(XMFLOAT2(static_pos - dummyButton.GetSize().x - 20, 0));
+	navtestButton.SetSize(XMFLOAT2(wid_idle * 0.75f, hei));
+	navtestButton.SetPos(XMFLOAT2(dummyButton.GetPos().x - navtestButton.GetSize().x - padding, 0));
 
 	physicsButton.SetSize(XMFLOAT2(wid_idle * 0.75f, hei));
-	physicsButton.SetPos(XMFLOAT2(dummyButton.GetPos().x - physicsButton.GetSize().x - 20, 0));
+	physicsButton.SetPos(XMFLOAT2(navtestButton.GetPos().x - physicsButton.GetSize().x - 20, 0));
 
 	stopButton.SetSize(XMFLOAT2(wid_idle * 0.75f, hei));
 	stopButton.SetPos(XMFLOAT2(physicsButton.GetPos().x - stopButton.GetSize().x - 20, 0));
@@ -3908,6 +4139,15 @@ void EditorComponent::UpdateTopMenuAnimation()
 	else
 	{
 		dummyButton.sprites[wi::gui::IDLE].params.color = color_off;
+	}
+
+	if (navtest_enabled)
+	{
+		navtestButton.sprites[wi::gui::IDLE].params.color = color_on;
+	}
+	else
+	{
+		navtestButton.sprites[wi::gui::IDLE].params.color = color_off;
 	}
 
 	if (wi::physics::IsSimulationEnabled())
@@ -4013,6 +4253,7 @@ void EditorComponent::RefreshSceneList()
 			componentsWnd.terrainWnd.SetEntity(wi::ecs::INVALID_ENTITY);
 			componentsWnd.spriteWnd.SetEntity(wi::ecs::INVALID_ENTITY);
 			componentsWnd.fontWnd.SetEntity(wi::ecs::INVALID_ENTITY);
+			componentsWnd.voxelGridWnd.SetEntity(wi::ecs::INVALID_ENTITY);
 
 			optionsWnd.RefreshEntityTree();
 			ResetHistory();

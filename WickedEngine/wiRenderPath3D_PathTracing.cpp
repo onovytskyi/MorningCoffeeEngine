@@ -42,6 +42,7 @@ namespace wi
 
 	void RenderPath3D_PathTracing::ResizeBuffers()
 	{
+		DeleteGPUResources();
 
 		GraphicsDevice* device = wi::graphics::GetDevice();
 
@@ -49,6 +50,13 @@ namespace wi
 
 		{
 			TextureDesc desc;
+			desc.format = wi::renderer::format_rendertarget_main;
+			desc.bind_flags = BindFlag::RENDER_TARGET | BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
+			desc.width = internalResolution.x;
+			desc.height = internalResolution.y;
+			device->CreateTexture(&desc, nullptr, &rtMain);
+			device->SetName(&rtMain, "rtMain");
+
 			desc.bind_flags = BindFlag::UNORDERED_ACCESS | BindFlag::SHADER_RESOURCE | BindFlag::RENDER_TARGET;
 			desc.format = Format::R32G32B32A32_FLOAT;
 			desc.width = internalResolution.x;
@@ -75,11 +83,34 @@ namespace wi
 				device->CreateTexture(&desc, nullptr, &traceStencil);
 				device->SetName(&traceStencil, "traceStencil");
 
+				depthBuffer_Copy = traceDepth;
+				depthBuffer_Copy1 = traceDepth;
+
 				desc.layout = ResourceState::DEPTHSTENCIL;
 				desc.bind_flags = BindFlag::DEPTH_STENCIL;
 				desc.format = wi::renderer::format_depthbuffer_main;
 				device->CreateTexture(&desc, nullptr, &depthBuffer_Main);
 				device->SetName(&depthBuffer_Main, "depthBuffer_Main");
+			}
+		}
+		{
+			TextureDesc desc;
+			desc.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
+			desc.format = Format::R32_FLOAT;
+			desc.width = internalResolution.x;
+			desc.height = internalResolution.y;
+			desc.mip_levels = 5;
+			desc.layout = ResourceState::SHADER_RESOURCE_COMPUTE;
+			device->CreateTexture(&desc, nullptr, &rtLinearDepth);
+			device->SetName(&rtLinearDepth, "rtLinearDepth");
+
+			for (uint32_t i = 0; i < desc.mip_levels; ++i)
+			{
+				int subresource_index;
+				subresource_index = device->CreateSubresource(&rtLinearDepth, SubresourceType::SRV, 0, 1, i, 1);
+				assert(subresource_index == i);
+				subresource_index = device->CreateSubresource(&rtLinearDepth, SubresourceType::UAV, 0, 1, i, 1);
+				assert(subresource_index == i);
 			}
 		}
 		{
@@ -109,8 +140,9 @@ namespace wi
 		wi::renderer::CreateLuminanceResources(luminanceResources, internalResolution);
 		wi::renderer::CreateBloomResources(bloomResources, internalResolution);
 
-		// also reset accumulation buffer state:
-		sam = -1;
+		setLightShaftsEnabled(getLightShaftsEnabled());
+
+		resetProgress();
 
 		RenderPath2D::ResizeBuffers(); // we don't need to use any buffers from RenderPath3D, so skip those
 	}
@@ -122,7 +154,7 @@ namespace wi
 		if (camera->IsDirty())
 		{
 			camera->SetDirty(false);
-			sam = -1;
+			resetProgress();
 		}
 		else
 		{
@@ -157,16 +189,11 @@ namespace wi
 		{
 			sam = target;
 		}
-		if (target < sam)
-		{
-			resetProgress();
-		}
 
 		scene->SetAccelerationStructureUpdateRequested(sam == 0);
 		setSceneUpdateEnabled(sam == 0);
 
 		RenderPath3D::Update(dt);
-
 
 #ifdef OPEN_IMAGE_DENOISE
 		if (sam == target)
@@ -282,7 +309,6 @@ namespace wi
 
 		if (sam < target)
 		{
-
 			CommandList cmd_copypages;
 			if (scene->terrains.GetCount() > 0)
 			{
@@ -311,7 +337,7 @@ namespace wi
 				{
 					wi::renderer::UpdateRaytracingAccelerationStructures(*scene, cmd);
 				}
-				});
+			});
 
 			// Main scene:
 			cmd = device->BeginCommandList();
@@ -325,8 +351,8 @@ namespace wi
 
 				wi::renderer::BindCameraCB(
 					*camera,
-					*camera,
-					*camera,
+					camera_previous,
+					camera_reflection,
 					cmd
 				);
 				wi::renderer::BindCommonResources(cmd);
@@ -365,31 +391,13 @@ namespace wi
 						cmd,
 						denoiserAlbedo.IsValid() ? &denoiserAlbedo : nullptr,
 						denoiserNormal.IsValid() ? &denoiserNormal : nullptr,
-						traceDepth.IsValid() ? &traceDepth : nullptr,
-						traceStencil.IsValid() ? &traceStencil : nullptr,
-						depthBuffer_Main.IsValid() ? &depthBuffer_Main : nullptr
+						&traceDepth,
+						&traceStencil,
+						&depthBuffer_Main
 					);
 
 					wi::profiler::EndRange(range); // Traced Scene
 				}
-
-				if (depthBuffer_Main.IsValid())
-				{
-					RenderPassImage rp[] = {
-						RenderPassImage::DepthStencil(&depthBuffer_Main, RenderPassImage::LoadOp::LOAD),
-						RenderPassImage::RenderTarget(&traceResult, RenderPassImage::LoadOp::LOAD)
-					};
-					device->RenderPassBegin(rp, arraysize(rp), cmd);
-				}
-				else
-				{
-					RenderPassImage rp[] = {
-						RenderPassImage::RenderTarget(&traceResult, RenderPassImage::LoadOp::LOAD)
-					};
-					device->RenderPassBegin(rp, arraysize(rp), cmd);
-				}
-				wi::renderer::DrawSpritesAndFonts(*scene, *camera, false, cmd);
-				device->RenderPassEnd(cmd);
 
 				});
 
@@ -415,7 +423,7 @@ namespace wi
 			}
 		}
 
-		// Tonemap etc:
+		// Composite, tonemap etc:
 		CommandList cmd = device->BeginCommandList();
 		wi::jobsystem::Execute(ctx, [this, cmd](wi::jobsystem::JobArgs args) {
 
@@ -423,19 +431,124 @@ namespace wi
 
 			wi::renderer::BindCameraCB(
 				*camera,
-				*camera,
-				*camera,
+				camera_previous,
+				camera_reflection,
 				cmd
 			);
 			wi::renderer::BindCommonResources(cmd);
 
-			Texture srcTex = denoiserResult.IsValid() && !wi::jobsystem::IsBusy(denoiserContext) ? denoiserResult : traceResult;
+			wi::renderer::Postprocess_Lineardepth(traceDepth, rtLinearDepth, cmd);
+
+			if (scene->weather.IsRealisticSky())
+			{
+				wi::renderer::ComputeSkyAtmosphereSkyViewLut(cmd);
+
+				if (scene->weather.IsRealisticSkyAerialPerspective())
+				{
+					wi::renderer::ComputeSkyAtmosphereCameraVolumeLut(cmd);
+				}
+			}
+			if (scene->weather.IsRealisticSky() && scene->weather.IsRealisticSkyAerialPerspective())
+			{
+				wi::renderer::Postprocess_AerialPerspective(
+					aerialperspectiveResources,
+					cmd
+				);
+			}
+			if (scene->weather.IsVolumetricClouds())
+			{
+				wi::renderer::Postprocess_VolumetricClouds(
+					volumetriccloudResources,
+					cmd,
+					*camera,
+					camera_previous,
+					camera_reflection,
+					false,
+					scene->weather.volumetricCloudsWeatherMapFirst.IsValid() ? &scene->weather.volumetricCloudsWeatherMapFirst.GetTexture() : nullptr,
+					scene->weather.volumetricCloudsWeatherMapSecond.IsValid() ? &scene->weather.volumetricCloudsWeatherMapSecond.GetTexture() : nullptr
+				);
+			}
+
+			RenderLightShafts(cmd);
+
+			// Composite other effects on top:
+			{
+				RenderPassImage rp[] = {
+					RenderPassImage::DepthStencil(&depthBuffer_Main, RenderPassImage::LoadOp::LOAD),
+					RenderPassImage::RenderTarget(&rtMain, RenderPassImage::LoadOp::CLEAR)
+				};
+				device->RenderPassBegin(rp, arraysize(rp), cmd);
+
+				Viewport vp;
+				vp.width = (float)rtMain.GetDesc().width;
+				vp.height = (float)rtMain.GetDesc().height;
+				device->BindViewports(1, &vp, cmd);
+
+				// Clear to trace result:
+				{
+					device->EventBegin("Clear to trace result", cmd);
+					wi::image::Params fx;
+					fx.enableFullScreen();
+					fx.blendFlag = wi::enums::BLENDMODE_OPAQUE;
+					if (denoiserResult.IsValid() && !wi::jobsystem::IsBusy(denoiserContext))
+					{
+						wi::image::Draw(&denoiserResult, fx, cmd);
+					}
+					else
+					{
+						wi::image::Draw(&traceResult, fx, cmd);
+					}
+					device->EventEnd(cmd);
+				}
+
+				// Blend Aerial Perspective on top:
+				if (scene->weather.IsRealisticSky() && scene->weather.IsRealisticSkyAerialPerspective())
+				{
+					device->EventBegin("Aerial Perspective Blend", cmd);
+					wi::image::Params fx;
+					fx.enableFullScreen();
+					fx.blendFlag = wi::enums::BLENDMODE_PREMULTIPLIED;
+					wi::image::Draw(&aerialperspectiveResources.texture_output, fx, cmd);
+					device->EventEnd(cmd);
+				}
+
+				// Blend the volumetric clouds on top:
+				if (scene->weather.IsVolumetricClouds())
+				{
+					wi::renderer::Postprocess_VolumetricClouds_Upsample(volumetriccloudResources, cmd);
+				}
+
+				wi::renderer::DrawDebugWorld(*scene, *camera, *this, cmd);
+				wi::renderer::DrawLightVisualizers(visibility_main, cmd);
+				wi::renderer::DrawSpritesAndFonts(*scene, *camera, false, cmd);
+
+				XMVECTOR sunDirection = XMLoadFloat3(&scene->weather.sunDirection);
+				if (getLightShaftsEnabled() && XMVectorGetX(XMVector3Dot(sunDirection, camera->GetAt())) > 0)
+				{
+					device->EventBegin("Contribute LightShafts", cmd);
+					wi::image::Params fx;
+					fx.enableFullScreen();
+					fx.blendFlag = wi::enums::BLENDMODE_ADDITIVE;
+					wi::image::Draw(&rtSun[1], fx, cmd);
+					device->EventEnd(cmd);
+				}
+				if (getLensFlareEnabled())
+				{
+					wi::renderer::DrawLensFlares(
+						visibility_main,
+						cmd,
+						scene->weather.IsVolumetricClouds() ? &volumetriccloudResources.texture_cloudMask : nullptr
+					);
+				}
+
+				device->RenderPassEnd(cmd);
+			}
 
 			if (getEyeAdaptionEnabled())
 			{
 				wi::renderer::ComputeLuminance(
 					luminanceResources,
-					srcTex,
+					rtMain,
 					cmd,
 					getEyeAdaptionRate(),
 					getEyeAdaptionKey()
@@ -445,7 +558,7 @@ namespace wi
 			{
 				wi::renderer::ComputeBloom(
 					bloomResources,
-					srcTex,
+					rtMain,
 					cmd,
 					getBloomThreshold(),
 					getExposure(),
@@ -454,7 +567,7 @@ namespace wi
 			}
 
 			wi::renderer::Postprocess_Tonemap(
-				srcTex,
+				rtMain,
 				rtPostprocess,
 				cmd,
 				getExposure(),

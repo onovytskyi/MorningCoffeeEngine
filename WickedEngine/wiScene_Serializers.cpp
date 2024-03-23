@@ -231,6 +231,12 @@ namespace wi::scene
 				anisotropy_strength = parallaxOcclusionMapping; // old version fix
 			}
 
+			if (seri.GetVersion() >= 3)
+			{
+				archive >> textures[TRANSPARENCYMAP].name;
+				archive >> textures[TRANSPARENCYMAP].uvset;
+			}
+
 			for (auto& x : textures)
 			{
 				if (!x.name.empty())
@@ -369,11 +375,16 @@ namespace wi::scene
 				archive << wi::helper::GetPathRelative(dir, textures[ANISOTROPYMAP].name);
 				archive << textures[ANISOTROPYMAP].uvset;
 			}
+
+			if (seri.GetVersion() >= 3)
+			{
+				archive << wi::helper::GetPathRelative(dir, textures[TRANSPARENCYMAP].name);
+				archive << textures[TRANSPARENCYMAP].uvset;
+			}
 		}
 	}
 	void MeshComponent::Serialize(wi::Archive& archive, EntitySerializer& seri)
 	{
-
 		if (archive.IsReadMode())
 		{
 			archive >> _flags;
@@ -594,6 +605,14 @@ namespace wi::scene
 			{
 				archive >> sort_priority;
 			}
+			if (seri.GetVersion() >= 3)
+			{
+				archive >> vertex_ao;
+			}
+
+			wi::jobsystem::Execute(seri.ctx, [&](wi::jobsystem::JobArgs args) {
+				CreateRenderData();
+			});
 		}
 		else
 		{
@@ -631,6 +650,10 @@ namespace wi::scene
 			if (seri.GetVersion() >= 2)
 			{
 				archive << sort_priority;
+			}
+			if (seri.GetVersion() >= 3)
+			{
+				archive << vertex_ao;
 			}
 		}
 	}
@@ -1151,6 +1174,13 @@ namespace wi::scene
 					archive << retargets[i].srcRelativeParentMatrix;
 				}
 			}
+		}
+
+
+		if (seri.GetVersion() >= 2)
+		{
+			// Root Bone Name
+			SerializeEntity(archive, rootMotionBone, seri);
 		}
 	}
 	void AnimationDataComponent::Serialize(wi::Archive& archive, EntitySerializer& seri)
@@ -1697,8 +1727,9 @@ namespace wi::scene
 				{
 					filename = dir + filename;
 					soundResource = wi::resourcemanager::Load(filename, wi::resourcemanager::Flags::IMPORT_RETAIN_FILEDATA);
-					soundinstance.SetLooped(IsLooped());
-					wi::audio::CreateSoundInstance(&soundResource.GetSound(), &soundinstance);
+					// Note: sound instance can't be created yet, as soundResource is not necessarily ready at this point
+					//	Consider when multiple threads are loading the same sound, one thread will be loading the data,
+					//	the others return early with the resource that will be containing the data once it has been loaded.
 				}
 			});
 		}
@@ -1958,6 +1989,12 @@ namespace wi::scene
 			{
 				SerializeEntity(archive, entity, seri);
 			}
+
+			if (seri.GetVersion() >= 1)
+			{
+				archive >> ragdoll_fatness;
+				archive >> ragdoll_headsize;
+			}
 		}
 		else
 		{
@@ -1971,6 +2008,12 @@ namespace wi::scene
 			for (auto& entity : bones)
 			{
 				SerializeEntity(archive, entity, seri);
+			}
+
+			if (seri.GetVersion() >= 1)
+			{
+				archive << ragdoll_fatness;
+				archive << ragdoll_headsize;
 			}
 		}
 	}

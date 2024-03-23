@@ -12,6 +12,8 @@
 #include "wiUnorderedMap.h"
 #include "wiLua.h"
 
+#include "Utility/mikktspace.h"
+
 #if __has_include("OpenImageDenoise/oidn.hpp")
 #include "OpenImageDenoise/oidn.hpp"
 #if OIDN_VERSION_MAJOR >= 2
@@ -71,6 +73,33 @@ namespace wi::scene
 			XMMatrixScalingFromVector(S_local) *
 			XMMatrixRotationQuaternion(R_local) *
 			XMMatrixTranslationFromVector(T_local);
+	}
+	XMFLOAT3 TransformComponent::GetForward() const
+	{
+		return wi::math::GetForward(world);
+	}
+	XMFLOAT3 TransformComponent::GetUp() const
+	{
+		return wi::math::GetUp(world);
+	}
+	XMFLOAT3 TransformComponent::GetRight() const
+	{
+		return wi::math::GetRight(world);
+	}
+	XMVECTOR TransformComponent::GetForwardV() const
+	{
+		XMFLOAT3 v = wi::math::GetForward(world);
+		return XMLoadFloat3(&v);
+	}
+	XMVECTOR TransformComponent::GetUpV() const
+	{
+		XMFLOAT3 v = wi::math::GetUp(world);
+		return XMLoadFloat3(&v);
+	}
+	XMVECTOR TransformComponent::GetRightV() const
+	{
+		XMFLOAT3 v = wi::math::GetRight(world);
+		return XMLoadFloat3(&v);
 	}
 	void TransformComponent::UpdateTransform()
 	{
@@ -330,6 +359,10 @@ namespace wi::scene
 		{
 			material.options |= SHADERMATERIAL_OPTION_BIT_UNLIT;
 		}
+		if (!IsVertexAODisabled())
+		{
+			material.options |= SHADERMATERIAL_OPTION_BIT_USE_VERTEXAO;
+		}
 
 		GraphicsDevice* device = wi::graphics::GetDevice();
 		for (int i = 0; i < TEXTURESLOT_COUNT; ++i)
@@ -455,6 +488,66 @@ namespace wi::scene
 		return wi::renderer::CombineStencilrefs(engineStencilRef, userStencilRef);
 	}
 
+	struct MikkTSpaceUserdata
+	{
+		MeshComponent* mesh = nullptr;
+		const uint32_t* indicesLOD0 = nullptr;
+		int faceCountLOD0 = 0;
+	};
+	int get_num_faces(const SMikkTSpaceContext* context)
+	{
+		const MikkTSpaceUserdata* userdata = static_cast<const MikkTSpaceUserdata*>(context->m_pUserData);
+		return userdata->faceCountLOD0;
+	}
+	int get_num_vertices_of_face(const SMikkTSpaceContext* context, const int iFace)
+	{
+		return 3;
+	}
+	int get_vertex_index(const SMikkTSpaceContext* context, int iFace, int iVert)
+	{
+		const MikkTSpaceUserdata* userdata = static_cast<const MikkTSpaceUserdata*>(context->m_pUserData);
+		int face_size = get_num_vertices_of_face(context, iFace);
+		int indices_index = iFace * face_size + iVert;
+		int index = int(userdata->indicesLOD0[indices_index]);
+		return index;
+	}
+	void get_position(const SMikkTSpaceContext* context, float* outpos, const int iFace, const int iVert)
+	{
+		const MikkTSpaceUserdata* userdata = static_cast<const MikkTSpaceUserdata*>(context->m_pUserData);
+		int index = get_vertex_index(context, iFace, iVert);
+		const XMFLOAT3& vert = userdata->mesh->vertex_positions[index];
+		outpos[0] = vert.x;
+		outpos[1] = vert.y;
+		outpos[2] = vert.z;
+	}
+	void get_normal(const SMikkTSpaceContext* context, float* outnormal, const int iFace, const int iVert)
+	{
+		const MikkTSpaceUserdata* userdata = static_cast<const MikkTSpaceUserdata*>(context->m_pUserData);
+		int index = get_vertex_index(context, iFace, iVert);
+		const XMFLOAT3& vert = userdata->mesh->vertex_normals[index];
+		outnormal[0] = vert.x;
+		outnormal[1] = vert.y;
+		outnormal[2] = vert.z;
+	}
+	void get_tex_coords(const SMikkTSpaceContext* context, float* outuv, const int iFace, const int iVert)
+	{
+		const MikkTSpaceUserdata* userdata = static_cast<const MikkTSpaceUserdata*>(context->m_pUserData);
+		int index = get_vertex_index(context, iFace, iVert);
+		const XMFLOAT2& vert = userdata->mesh->vertex_uvset_0[index];
+		outuv[0] = vert.x;
+		outuv[1] = vert.y;
+	}
+	void set_tspace_basic(const SMikkTSpaceContext* context, const float* tangentu, const float fSign, const int iFace, const int iVert)
+	{
+		const MikkTSpaceUserdata* userdata = static_cast<const MikkTSpaceUserdata*>(context->m_pUserData);
+		auto index = get_vertex_index(context, iFace, iVert);
+		XMFLOAT4& vert = userdata->mesh->vertex_tangents[index];
+		vert.x = tangentu[0];
+		vert.y = tangentu[1];
+		vert.z = tangentu[2];
+		vert.w = fSign;
+	}
+
 	void MeshComponent::DeleteRenderData()
 	{
 		generalBuffer = {};
@@ -489,6 +582,39 @@ namespace wi::scene
 			// Generate tangents if not found:
 			vertex_tangents.resize(vertex_positions.size());
 
+#if 1
+			// MikkTSpace tangent generation:
+			MikkTSpaceUserdata userdata;
+			userdata.mesh = this;
+			uint32_t indexOffsetLOD0 = ~0u;
+			uint32_t indexCountLOD0 = 0;
+			uint32_t first_subset = 0;
+			uint32_t last_subset = 0;
+			GetLODSubsetRange(0, first_subset, last_subset);
+			for (uint32_t subsetIndex = first_subset; subsetIndex < last_subset; ++subsetIndex)
+			{
+				const MeshComponent::MeshSubset& subset = subsets[subsetIndex];
+				indexOffsetLOD0 = std::min(indexOffsetLOD0, subset.indexOffset);
+				indexCountLOD0 = std::max(indexCountLOD0, subset.indexCount);
+			}
+			userdata.indicesLOD0 = indices.data() + indexOffsetLOD0;
+			userdata.faceCountLOD0 = int(indexCountLOD0) / 3;
+
+			SMikkTSpaceInterface iface = {};
+			iface.m_getNumFaces = get_num_faces;
+			iface.m_getNumVerticesOfFace = get_num_vertices_of_face;
+			iface.m_getNormal = get_normal;
+			iface.m_getPosition = get_position;
+			iface.m_getTexCoord = get_tex_coords;
+			iface.m_setTSpaceBasic = set_tspace_basic;
+			SMikkTSpaceContext context = {};
+			context.m_pInterface = &iface;
+			context.m_pUserData = &userdata;
+			tbool mikktspace_result = genTangSpaceDefault(&context);
+			assert(mikktspace_result == 1);
+
+#else
+			// Old tangent generation logic:
 			uint32_t first_subset = 0;
 			uint32_t last_subset = 0;
 			GetLODSubsetRange(0, first_subset, last_subset);
@@ -560,6 +686,7 @@ namespace wi::scene
 					vertex_tangents[i2].w = sign;
 				}
 			}
+#endif
 		}
 
 		const size_t uv_count = std::max(vertex_uvset_0.size(), vertex_uvset_1.size());
@@ -629,20 +756,22 @@ namespace wi::scene
 			{
 				// This is done to avoid 0 scaling on any axis of the UNORM remap matrix of the AABB
 				//	It specifically solves a problem with hardware raytracing which treats AABB with zero axis as invisible
-				if (aabb._max.x - aabb._min.x < std::numeric_limits<float>::epsilon())
+				//	Also there was problem with using float epsilon value, it did not enough precision for raytracing
+				constexpr float min_dim = 0.01f;
+				if (aabb._max.x - aabb._min.x < min_dim)
 				{
-					aabb._max.x += std::numeric_limits<float>::epsilon();
-					aabb._min.x -= std::numeric_limits<float>::epsilon();
+					aabb._max.x += min_dim;
+					aabb._min.x -= min_dim;
 				}
-				if (aabb._max.y - aabb._min.y < std::numeric_limits<float>::epsilon())
+				if (aabb._max.y - aabb._min.y < min_dim)
 				{
-					aabb._max.y += std::numeric_limits<float>::epsilon();
-					aabb._min.y -= std::numeric_limits<float>::epsilon();
+					aabb._max.y += min_dim;
+					aabb._min.y -= min_dim;
 				}
-				if (aabb._max.z - aabb._min.z < std::numeric_limits<float>::epsilon())
+				if (aabb._max.z - aabb._min.z < min_dim)
 				{
-					aabb._max.z += std::numeric_limits<float>::epsilon();
-					aabb._min.z -= std::numeric_limits<float>::epsilon();
+					aabb._max.z += min_dim;
+					aabb._min.z -= min_dim;
 				}
 			}
 		}
@@ -814,10 +943,8 @@ namespace wi::scene
 				buffer_offset += AlignTo(vb_nor.size, alignment);
 				for (size_t i = 0; i < vertex_normals.size(); ++i)
 				{
-					XMFLOAT3 nor = vertex_normals.empty() ? XMFLOAT3(1, 1, 1) : vertex_normals[i];
-					XMStoreFloat3(&nor, XMVector3Normalize(XMLoadFloat3(&nor)));
 					Vertex_NOR vert;
-					vert.FromFULL(nor);
+					vert.FromFULL(vertex_normals[i]);
 					std::memcpy(vertices + i, &vert, sizeof(vert));
 				}
 			}
@@ -1599,7 +1726,6 @@ namespace wi::scene
 		lightmapTextureData.clear();
 		SetLightmapRenderRequest(false);
 	}
-
 	void ObjectComponent::SaveLightmap()
 	{
 		if (lightmap.IsValid() && has_flag(lightmap.desc.bind_flags, BindFlag::RENDER_TARGET))
@@ -1700,6 +1826,35 @@ namespace wi::scene
 			wi::renderer::BlockCompress(lightmap, bc6tex, cmd);
 			wi::helper::saveTextureToMemory(bc6tex, lightmapTextureData); // internally waits for GPU completion
 			lightmap.desc = desc;
+		}
+	}
+	void ObjectComponent::DeleteRenderData()
+	{
+		vb_ao = {};
+		vb_ao_srv = -1;
+	}
+	void ObjectComponent::CreateRenderData()
+	{
+		DeleteRenderData();
+
+		GraphicsDevice* device = wi::graphics::GetDevice();
+
+		if (!vertex_ao.empty())
+		{
+			GPUBufferDesc desc;
+			desc.bind_flags = BindFlag::SHADER_RESOURCE;
+			desc.size = sizeof(Vertex_AO) * vertex_ao.size();
+			desc.format = Vertex_AO::FORMAT;
+
+			auto fill_ao = [&](void* data) {
+				std::memcpy(data, vertex_ao.data(), vertex_ao.size());
+			};
+
+			bool success = device->CreateBuffer2(&desc, fill_ao, &vb_ao);
+			assert(success);
+			device->SetName(&vb_ao, "ObjectComponent::vb_ao");
+
+			vb_ao_srv = device->GetDescriptorIndex(&vb_ao, SubresourceType::SRV);
 		}
 	}
 

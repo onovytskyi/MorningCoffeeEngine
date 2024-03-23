@@ -227,6 +227,15 @@ public: // Function declaration
     UINT MaxViewDescriptorHeapSize() const noexcept;
 #endif
 
+#if defined(D3D12_SDK_VERSION) && (D3D12_SDK_VERSION >= 611)
+    BOOL ComputeOnlyWriteWatchSupported() const noexcept;
+#endif
+
+#if defined(D3D12_SDK_VERSION) && (D3D12_SDK_VERSION >= 612)
+    D3D12_EXECUTE_INDIRECT_TIER ExecuteIndirectTier() const noexcept;
+    D3D12_WORK_GRAPHS_TIER WorkGraphsTier() const noexcept;
+#endif
+
 private: // Private structs and helpers declaration
     struct ProtectedResourceSessionTypesLocal : D3D12_FEATURE_DATA_PROTECTED_RESOURCE_SESSION_TYPES
     {
@@ -309,6 +318,12 @@ private: // Member data
 #endif
 #if defined(D3D12_SDK_VERSION) && (D3D12_SDK_VERSION >= 610)
     D3D12_FEATURE_DATA_D3D12_OPTIONS19 m_dOptions19;
+#endif
+#if defined(D3D12_SDK_VERSION) && (D3D12_SDK_VERSION >= 611)
+    D3D12_FEATURE_DATA_D3D12_OPTIONS20 m_dOptions20;
+#endif
+#if defined(D3D12_SDK_VERSION) && (D3D12_SDK_VERSION >= 612)
+    D3D12_FEATURE_DATA_D3D12_OPTIONS21 m_dOptions21;
 #endif
 };
 
@@ -397,6 +412,12 @@ inline CD3DX12FeatureSupport::CD3DX12FeatureSupport() noexcept
 #endif
 #if defined (D3D12_SDK_VERSION) && (D3D12_SDK_VERSION >= 610)
 , m_dOptions19{}
+#endif
+#if defined (D3D12_SDK_VERSION) && (D3D12_SDK_VERSION >= 611)
+, m_dOptions20{}
+#endif
+#if defined (D3D12_SDK_VERSION) && (D3D12_SDK_VERSION >= 612)
+, m_dOptions21{}
 #endif
 {}
 
@@ -556,6 +577,20 @@ inline HRESULT CD3DX12FeatureSupport::Init(ID3D12Device* pDevice)
         m_dOptions19.MaxSamplerDescriptorHeapSize = D3D12_MAX_SHADER_VISIBLE_SAMPLER_HEAP_SIZE;
         m_dOptions19.MaxSamplerDescriptorHeapSizeWithStaticSamplers = D3D12_MAX_SHADER_VISIBLE_SAMPLER_HEAP_SIZE;
         m_dOptions19.MaxViewDescriptorHeapSize = D3D12_MAX_SHADER_VISIBLE_DESCRIPTOR_HEAP_SIZE_TIER_1;
+    }
+#endif
+
+#if defined(D3D12_SDK_VERSION) && (D3D12_SDK_VERSION >= 611)
+    if (FAILED(m_pDevice->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS20, &m_dOptions20, sizeof(m_dOptions20))))
+    {
+        m_dOptions20 = {};
+    }
+#endif
+
+#if defined(D3D12_SDK_VERSION) && (D3D12_SDK_VERSION >= 612)
+    if (FAILED(m_pDevice->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS21, &m_dOptions21, sizeof(m_dOptions21))))
+    {
+        m_dOptions21 = {};
     }
 #endif
 
@@ -926,6 +961,17 @@ FEATURE_SUPPORT_GET(UINT, m_dOptions19, MaxSamplerDescriptorHeapSizeWithStaticSa
 FEATURE_SUPPORT_GET(UINT, m_dOptions19, MaxViewDescriptorHeapSize);
 #endif
 
+#if defined(D3D12_SDK_VERSION) && (D3D12_SDK_VERSION >= 611)
+// 49: Options20
+FEATURE_SUPPORT_GET(BOOL, m_dOptions20, ComputeOnlyWriteWatchSupported);
+#endif
+
+#if defined(D3D12_SDK_VERSION) && (D3D12_SDK_VERSION >= 612)
+// 50: Options21
+FEATURE_SUPPORT_GET(D3D12_EXECUTE_INDIRECT_TIER, m_dOptions21, ExecuteIndirectTier);
+FEATURE_SUPPORT_GET(D3D12_WORK_GRAPHS_TIER, m_dOptions21, WorkGraphsTier);
+#endif
+
 // Helper function to decide the highest shader model supported by the system
 // Stores the result in m_dShaderModel
 // Must be updated whenever a new shader model is added to the d3d12.h header
@@ -936,6 +982,9 @@ inline HRESULT CD3DX12FeatureSupport::QueryHighestShaderModel()
 
     const D3D_SHADER_MODEL allModelVersions[] =
     {
+#if defined(D3D12_SDK_VERSION) && (D3D12_SDK_VERSION >= 612)
+        D3D_SHADER_MODEL_6_9,
+#endif
 #if defined(D3D12_SDK_VERSION) && (D3D12_SDK_VERSION >= 606)
         D3D_SHADER_MODEL_6_8,
 #endif
@@ -1032,7 +1081,12 @@ inline HRESULT CD3DX12FeatureSupport::QueryHighestFeatureLevel()
         D3D_FEATURE_LEVEL_9_3,
         D3D_FEATURE_LEVEL_9_2,
         D3D_FEATURE_LEVEL_9_1,
-        D3D_FEATURE_LEVEL_1_0_CORE
+#if defined(D3D12_SDK_VERSION) && (D3D12_SDK_VERSION >= 5)
+        D3D_FEATURE_LEVEL_1_0_CORE,
+#endif
+#if defined(D3D12_SDK_VERSION) && (D3D12_SDK_VERSION >= 611)
+        D3D_FEATURE_LEVEL_1_0_GENERIC
+#endif
     };
 
     D3D12_FEATURE_DATA_FEATURE_LEVELS dFeatureLevel;

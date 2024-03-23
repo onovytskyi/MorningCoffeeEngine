@@ -80,9 +80,10 @@ namespace wi
 		bool sceneUpdateEnabled = true;
 		bool fsrEnabled = false;
 		bool fsr2Enabled = false;
-		bool vxgiResolveFullResolution = false;
 
 		uint32_t msaaSampleCount = 1;
+
+		mutable wi::vector<const wi::graphics::Texture*> clearableTextures;
 
 	public:
 		wi::graphics::Texture rtMain;
@@ -96,8 +97,8 @@ namespace wi
 		wi::graphics::Texture rtSceneCopy; // contains the rendered scene that can be fed into transparent pass for distortion effect
 		wi::graphics::Texture rtSceneCopy_tmp; // temporary for gaussian mipchain
 		wi::graphics::Texture rtWaterRipple; // water ripple sprite normal maps are rendered into this
+		wi::graphics::Texture rtParticleDistortion_render; // contains distortive particles (can be MSAA)
 		wi::graphics::Texture rtParticleDistortion; // contains distortive particles
-		wi::graphics::Texture rtParticleDistortion_Resolved; // contains distortive particles
 		wi::graphics::Texture rtVolumetricLights[2]; // contains the volumetric light results
 		wi::graphics::Texture rtBloom; // contains the bright parts of the image + mipchain
 		wi::graphics::Texture rtBloom_tmp; // temporary for bloom downsampling
@@ -162,7 +163,7 @@ namespace wi
 		virtual void RenderTransparents(wi::graphics::CommandList cmd) const;
 		virtual void RenderPostprocessChain(wi::graphics::CommandList cmd) const;
 
-		void DeleteGPUResources();
+		void DeleteGPUResources() override;
 		void ResizeBuffers() override;
 
 		wi::scene::CameraComponent* camera = &wi::scene::GetCamera();
@@ -256,7 +257,6 @@ namespace wi
 		constexpr bool getSceneUpdateEnabled() const { return sceneUpdateEnabled; }
 		constexpr bool getFSREnabled() const { return fsrEnabled; }
 		constexpr bool getFSR2Enabled() const { return fsr2Enabled; }
-		constexpr bool getVXGIResolveFullResolutionEnabled() const { return vxgiResolveFullResolution; }
 
 		constexpr uint32_t getMSAASampleCount() const { return msaaSampleCount; }
 
@@ -311,7 +311,6 @@ namespace wi
 		void setFSREnabled(bool value);
 		void setFSR2Enabled(bool value);
 		void setFSR2Preset(FSR2_Preset preset); // this will modify resolution scaling and sampler lod bias
-		void setVXGIResolveFullResolutionEnabled(bool value) { vxgiResolveFullResolution = value; }
 
 		virtual void setMSAASampleCount(uint32_t value) { msaaSampleCount = value; }
 

@@ -391,7 +391,7 @@ namespace wi::gui
 					tooltipSprite.params.siz.y + tooltip_shadow * 2,
 					tooltip_shadow_color
 				);
-				wi::image::Draw(wi::texturehelper::getWhite(), fx, cmd);
+				wi::image::Draw(nullptr, fx, cmd);
 			}
 
 			tooltipSprite.Draw(cmd);
@@ -880,10 +880,10 @@ namespace wi::gui
 		switch (font_description.params.h_align)
 		{
 		case wi::font::WIFALIGN_LEFT:
-			font_description.params.posX = translation.x + scale.x;
+			font_description.params.posX = translation.x + scale.x + shadow;
 			break;
 		case wi::font::WIFALIGN_RIGHT:
-			font_description.params.posX = translation.x;
+			font_description.params.posX = translation.x - shadow;
 			break;
 		case wi::font::WIFALIGN_CENTER:
 		default:
@@ -893,10 +893,10 @@ namespace wi::gui
 		switch (font_description.params.v_align)
 		{
 		case wi::font::WIFALIGN_TOP:
-			font_description.params.posY = translation.y + scale.y;
+			font_description.params.posY = translation.y + scale.y + shadow;
 			break;
 		case wi::font::WIFALIGN_BOTTOM:
-			font_description.params.posY = translation.y;
+			font_description.params.posY = translation.y - shadow;
 			break;
 		case wi::font::WIFALIGN_CENTER:
 		default:
@@ -930,7 +930,7 @@ namespace wi::gui
 					}
 				}
 			}
-			wi::image::Draw(wi::texturehelper::getWhite(), fx, cmd);
+			wi::image::Draw(nullptr, fx, cmd);
 		}
 
 		font_description.Draw(cmd);
@@ -1127,7 +1127,7 @@ namespace wi::gui
 		fx.pos = XMFLOAT3(translation.x, translation.y, 0);
 		fx.siz = XMFLOAT2(scale.x, scale.y);
 		fx.color = sprites[IDLE].params.color;
-		wi::image::Draw(wi::texturehelper::getWhite(), fx, cmd);
+		wi::image::Draw(nullptr, fx, cmd);
 
 		// scrollbar knob
 		sprites_knob[scrollbar_state].Draw(cmd);
@@ -1139,7 +1139,7 @@ namespace wi::gui
 		//scissorRect.top = (int32_t)(0);
 		//GraphicsDevice* device = wi::graphics::GetDevice();
 		//device->BindScissorRects(1, &scissorRect, cmd);
-		//wi::image::Draw(wi::texturehelper::getWhite(), wi::image::Params(hitBox.pos.x, hitBox.pos.y, hitBox.siz.x, hitBox.siz.y, wi::Color(255,0,0,100)), cmd);
+		//wi::image::Draw(nullptr, wi::image::Params(hitBox.pos.x, hitBox.pos.y, hitBox.siz.x, hitBox.siz.y, wi::Color(255,0,0,100)), cmd);
 
 	}
 	void ScrollBar::SetColor(wi::Color color, int id)
@@ -1294,7 +1294,7 @@ namespace wi::gui
 					}
 				}
 			}
-			wi::image::Draw(wi::texturehelper::getWhite(), fx, cmd);
+			wi::image::Draw(nullptr, fx, cmd);
 		}
 
 		ApplyScissor(canvas, scissorRect, cmd);
@@ -1584,7 +1584,7 @@ namespace wi::gui
 					}
 				}
 			}
-			wi::image::Draw(wi::texturehelper::getWhite(), fx, cmd);
+			wi::image::Draw(nullptr, fx, cmd);
 		}
 
 		font_description.Draw(cmd);
@@ -1626,7 +1626,7 @@ namespace wi::gui
 				params.siz.y = scale.y - 2;
 				params.blendFlag = wi::enums::BLENDMODE_ALPHA;
 				params.color = wi::Color::lerp(font_input.params.color, wi::Color::Transparent(), 0.5f);
-				wi::image::Draw(wi::texturehelper::getWhite(), params, cmd);
+				wi::image::Draw(nullptr, params, cmd);
 			}
 
 			//Rect scissorRect;
@@ -1941,7 +1941,7 @@ namespace wi::gui
 					}
 				}
 			}
-			wi::image::Draw(wi::texturehelper::getWhite(), fx, cmd);
+			wi::image::Draw(nullptr, fx, cmd);
 		}
 
 		font.Draw(cmd);
@@ -2111,7 +2111,7 @@ namespace wi::gui
 					}
 				}
 			}
-			wi::image::Draw(wi::texturehelper::getWhite(), fx, cmd);
+			wi::image::Draw(nullptr, fx, cmd);
 		}
 
 		font.Draw(cmd);
@@ -2160,7 +2160,7 @@ namespace wi::gui
 					scale.y * 0.5f
 				);
 				params.color = font.params.color;
-				wi::image::Draw(wi::texturehelper::getWhite(), params, cmd);
+				wi::image::Draw(nullptr, params, cmd);
 			}
 		}
 		else if (!uncheck_text.empty())
@@ -2435,7 +2435,7 @@ namespace wi::gui
 					}
 				}
 			}
-			wi::image::Draw(wi::texturehelper::getWhite(), fx, cmd);
+			wi::image::Draw(nullptr, fx, cmd);
 		}
 
 		wi::Color color = GetColor();
@@ -2473,7 +2473,7 @@ namespace wi::gui
 		wi::image::Params fx = sprites[state].params;
 		fx.pos = XMFLOAT3(translation.x + scale.x + 1, translation.y, 0);
 		fx.siz = XMFLOAT2(scale.y, scale.y);
-		wi::image::Draw(wi::texturehelper::getWhite(), fx, cmd);
+		wi::image::Draw(nullptr, fx, cmd);
 
 		// control-arrow-triangle
 		{
@@ -2524,7 +2524,7 @@ namespace wi::gui
 					fx.pos = XMFLOAT3(translation.x + scale.x + 1, translation.y + scale.y + drop_offset, 0);
 					fx.siz = XMFLOAT2(scale.y, scale.y * maxVisibleItemCount);
 					fx.color = drop_color;
-					wi::image::Draw(wi::texturehelper::getWhite(), fx, cmd);
+					wi::image::Draw(nullptr, fx, cmd);
 				}
 
 				// control-scrollbar-grab
@@ -2577,7 +2577,7 @@ namespace wi::gui
 						fx.color = sprites[ACTIVE].params.color;
 					}
 				}
-				wi::image::Draw(wi::texturehelper::getWhite(), fx, cmd);
+				wi::image::Draw(nullptr, fx, cmd);
 
 				wi::font::Params fp = wi::font::Params(
 					translation.x + scale.x * 0.5f,
@@ -2630,6 +2630,7 @@ namespace wi::gui
 		items.clear();
 
 		selected = -1;
+		firstItemVisible = 0;
 	}
 	void ComboBox::SetMaxVisibleItemCount(int value)
 	{
@@ -2959,7 +2960,14 @@ namespace wi::gui
 	void Window::AddWidget(Widget* widget, AttachmentOptions options)
 	{
 		widget->SetEnabled(this->IsEnabled());
-		widget->SetVisible(this->IsVisible());
+		if (IsVisible() && !IsMinimized())
+		{
+			widget->SetVisible(true);
+		}
+		else
+		{
+			widget->SetVisible(false);
+		}
 		if (has_flag(options, AttachmentOptions::SCROLLABLE))
 		{
 			widget->AttachTo(&scrollable_area);
@@ -3197,7 +3205,7 @@ namespace wi::gui
 					}
 				}
 			}
-			wi::image::Draw(wi::texturehelper::getWhite(), fx, cmd);
+			wi::image::Draw(nullptr, fx, cmd);
 		}
 
 		// base:
@@ -3228,12 +3236,12 @@ namespace wi::gui
 		//scissorRect.top = (int32_t)(0);
 		//GraphicsDevice* device = wi::graphics::GetDevice();
 		//device->BindScissorRects(1, &scissorRect, cmd);
-		//wi::image::Draw(wi::texturehelper::getWhite(), wi::image::Params(scrollable_area.active_area.pos.x, scrollable_area.active_area.pos.y, scrollable_area.active_area.siz.x, scrollable_area.active_area.siz.y, wi::Color(255,0,255,100)), cmd);
+		//wi::image::Draw(nullptr, wi::image::Params(scrollable_area.active_area.pos.x, scrollable_area.active_area.pos.y, scrollable_area.active_area.siz.x, scrollable_area.active_area.siz.y, wi::Color(255,0,255,100)), cmd);
 		//Hitbox2D p = scrollable_area.GetPointerHitbox();
-		//wi::image::Draw(wi::texturehelper::getWhite(), wi::image::Params(p.pos.x, p.pos.y, p.siz.x * 10, p.siz.y * 10, wi::Color(255,0,0,100)), cmd);
+		//wi::image::Draw(nullptr, wi::image::Params(p.pos.x, p.pos.y, p.siz.x * 10, p.siz.y * 10, wi::Color(255,0,0,100)), cmd);
 		//if (!IsCollapsed())
 		//{
-		//	wi::image::Draw(wi::texturehelper::getWhite(), wi::image::Params(scrollable_area.translation.x, scrollable_area.translation.y, scale.x, 10, wi::Color(255,0,255,100)), cmd);
+		//	wi::image::Draw(nullptr, wi::image::Params(scrollable_area.translation.x, scrollable_area.translation.y, scale.x, 10, wi::Color(255,0,255,100)), cmd);
 		//}
 
 		GetDevice()->EventEnd(cmd);
@@ -3249,12 +3257,23 @@ namespace wi::gui
 	void Window::SetVisible(bool value)
 	{
 		Widget::SetVisible(value);
-		//SetMinimized(!value);
-		if (!IsMinimized())
+		bool minimized = IsMinimized();
+		for (auto& x : widgets)
 		{
-			for (auto& x : widgets)
+			if (
+				x == &resizeDragger_UpperLeft ||
+				x == &resizeDragger_UpperRight ||
+				x == &closeButton ||
+				x == &collapseButton ||
+				x == &moveDragger ||
+				x == &label
+				)
 			{
 				x->SetVisible(value);
+			}
+			else
+			{
+				x->SetVisible(!minimized);
 			}
 		}
 	}
@@ -3296,18 +3315,23 @@ namespace wi::gui
 	{
 		minimized = value;
 
-		scrollable_area.SetVisible(!value);
-		if (resizeDragger_BottomLeft.parent != nullptr)
+		for (auto& x : widgets)
 		{
-			resizeDragger_BottomLeft.SetVisible(!value);
-		}
-		if (resizeDragger_BottomRight.parent != nullptr)
-		{
-			resizeDragger_BottomRight.SetVisible(!value);
+			if (
+				x == &resizeDragger_UpperLeft ||
+				x == &resizeDragger_UpperRight ||
+				x == &closeButton ||
+				x == &collapseButton ||
+				x == &moveDragger ||
+				x == &label
+				)
+			{
+				continue;
+			}
+			x->SetVisible(!value);
 		}
 
-		scrollbar_horizontal.SetVisible(!value);
-		scrollbar_vertical.SetVisible(!value);
+		scrollable_area.SetVisible(!value);
 
 		if (IsMinimized())
 		{
@@ -3407,14 +3431,6 @@ namespace wi::gui
 		{
 			moveDragger.Detach();
 			float rem = 0;
-			if (closeButton.parent != nullptr)
-			{
-				rem++;
-			}
-			if (collapseButton.parent != nullptr)
-			{
-				rem++;
-			}
 			if (resizeDragger_UpperLeft.parent != nullptr)
 			{
 				rem++;
@@ -3423,9 +3439,25 @@ namespace wi::gui
 			{
 				rem++;
 			}
+			if (closeButton.parent != nullptr)
+			{
+				rem++;
+			}
+			if (collapseButton.parent != nullptr)
+			{
+				rem++;
+			}
 			moveDragger.SetSize(XMFLOAT2(scale.x - control_size * rem, control_size));
 			float offset = 0;
 			if (resizeDragger_UpperLeft.parent != nullptr)
+			{
+				offset++;
+			}
+			if (closeButton.parent != nullptr)
+			{
+				offset++;
+			}
+			if (collapseButton.parent != nullptr)
 			{
 				offset++;
 			}
@@ -3436,28 +3468,28 @@ namespace wi::gui
 		{
 			closeButton.Detach();
 			closeButton.SetSize(XMFLOAT2(control_size, control_size));
-			float offset = 1;
-			if (resizeDragger_UpperRight.parent != nullptr)
+			float offset = 0;
+			if (resizeDragger_UpperLeft.parent != nullptr)
 			{
 				offset++;
 			}
-			closeButton.SetPos(XMFLOAT2(translation.x + scale.x - control_size * offset, translation.y));
+			closeButton.SetPos(XMFLOAT2(translation.x + control_size * offset, translation.y));
 			closeButton.AttachTo(this);
 		}
 		if (collapseButton.parent != nullptr)
 		{
 			collapseButton.Detach();
 			collapseButton.SetSize(XMFLOAT2(control_size, control_size));
-			float offset = 1;
+			float offset = 0;
 			if (closeButton.parent != nullptr)
 			{
 				offset++;
 			}
-			if (resizeDragger_UpperRight.parent != nullptr)
+			if (resizeDragger_UpperLeft.parent != nullptr)
 			{
 				offset++;
 			}
-			collapseButton.SetPos(XMFLOAT2(translation.x + scale.x - control_size * offset, translation.y));
+			collapseButton.SetPos(XMFLOAT2(translation.x + control_size * offset, translation.y));
 			collapseButton.AttachTo(this);
 		}
 		if (resizeDragger_UpperLeft.parent != nullptr)
@@ -3499,15 +3531,17 @@ namespace wi::gui
 				label_size.x -= control_size;
 				label_pos.x += control_size;
 			}
-			if (resizeDragger_UpperRight.parent != nullptr)
-			{
-				label_size.x -= control_size;
-			}
 			if (closeButton.parent != nullptr)
 			{
 				label_size.x -= control_size;
+				label_pos.x += control_size;
 			}
 			if (collapseButton.parent != nullptr)
+			{
+				label_size.x -= control_size;
+				label_pos.x += control_size;
+			}
+			if (resizeDragger_UpperRight.parent != nullptr)
 			{
 				label_size.x -= control_size;
 			}
@@ -4657,7 +4691,7 @@ namespace wi::gui
 					}
 				}
 			}
-			wi::image::Draw(wi::texturehelper::getWhite(), fx, cmd);
+			wi::image::Draw(nullptr, fx, cmd);
 		}
 
 		// control-base
@@ -4675,7 +4709,7 @@ namespace wi::gui
 		fx.color = sprites[IDLE].params.color;
 		fx.pos = XMFLOAT3(itemlist_box.pos.x, itemlist_box.pos.y, 0);
 		fx.siz = XMFLOAT2(itemlist_box.siz.x, itemlist_box.siz.y);
-		wi::image::Draw(wi::texturehelper::getWhite(), fx, cmd);
+		wi::image::Draw(nullptr, fx, cmd);
 
 		Rect rect_without_scrollbar;
 		rect_without_scrollbar.left = (int)itemlist_box.pos.x;
@@ -4732,7 +4766,7 @@ namespace wi::gui
 			// selected box:
 			if (item.selected || item_highlight == i)
 			{
-				wi::image::Draw(wi::texturehelper::getWhite()
+				wi::image::Draw(nullptr
 					, wi::image::Params(name_box.pos.x, name_box.pos.y, name_box.siz.x, name_box.siz.y,
 						sprites[item.selected ? FOCUS : IDLE].params.color), cmd);
 			}

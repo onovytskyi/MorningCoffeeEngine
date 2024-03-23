@@ -70,6 +70,12 @@ namespace wi::scene
 		XMVECTOR GetPositionV() const;
 		XMVECTOR GetRotationV() const;
 		XMVECTOR GetScaleV() const;
+		XMFLOAT3 GetForward() const;
+		XMFLOAT3 GetUp() const;
+		XMFLOAT3 GetRight() const;
+		XMVECTOR GetForwardV() const;
+		XMVECTOR GetUpV() const;
+		XMVECTOR GetRightV() const;
 		// Computes the local space matrix from scale, rotation, translation and returns it
 		XMMATRIX GetLocalMatrix() const;
 		// Applies the local space to the world space matrix. This overwrites world matrix
@@ -122,6 +128,7 @@ namespace wi::scene
 			DOUBLE_SIDED = 1 << 11,
 			OUTLINE = 1 << 12,
 			PREFER_UNCOMPRESSED_TEXTURES = 1 << 13,
+			DISABLE_VERTEXAO = 1 << 14,
 		};
 		uint32_t _flags = CAST_SHADOW;
 
@@ -203,6 +210,7 @@ namespace wi::scene
 			CLEARCOATNORMALMAP,
 			SPECULARMAP,
 			ANISOTROPYMAP,
+			TRANSPARENCYMAP,
 
 			TEXTURESLOT_COUNT
 		};
@@ -267,6 +275,7 @@ namespace wi::scene
 		inline bool IsDoubleSided() const { return _flags & DOUBLE_SIDED; }
 		inline bool IsOutlineEnabled() const { return _flags & OUTLINE; }
 		inline bool IsPreferUncompressedTexturesEnabled() const { return _flags & PREFER_UNCOMPRESSED_TEXTURES; }
+		inline bool IsVertexAODisabled() const { return _flags & DISABLE_VERTEXAO; }
 
 		inline void SetBaseColor(const XMFLOAT4& value) { SetDirty(); baseColor = value; }
 		inline void SetSpecularColor(const XMFLOAT4& value) { SetDirty(); specularColor = value; }
@@ -306,6 +315,7 @@ namespace wi::scene
 		inline void SetDoubleSided(bool value = true) { if (value) { _flags |= DOUBLE_SIDED; } else { _flags &= ~DOUBLE_SIDED; } }
 		inline void SetOutlineEnabled(bool value = true) { if (value) { _flags |= OUTLINE; } else { _flags &= ~OUTLINE; } }
 		inline void SetPreferUncompressedTexturesEnabled(bool value = true) { if (value) { _flags |= PREFER_UNCOMPRESSED_TEXTURES; } else { _flags &= ~PREFER_UNCOMPRESSED_TEXTURES; } CreateRenderData(true); }
+		inline void SetVertexAODisabled(bool value = true) { if (value) { _flags |= DISABLE_VERTEXAO; } else { _flags &= ~DISABLE_VERTEXAO; } }
 
 		// The MaterialComponent will be written to ShaderMaterial (a struct that is optimized for GPU use)
 		void WriteShaderMaterial(ShaderMaterial* dest) const;
@@ -809,12 +819,15 @@ namespace wi::scene
 		uint32_t lightmapHeight = 0;
 		wi::vector<uint8_t> lightmapTextureData;
 		uint32_t sort_priority = 0; // increase to draw earlier (currently 4 bits will be used)
+		wi::vector<uint8_t> vertex_ao;
 
 		// Non-serialized attributes:
 		uint32_t filterMaskDynamic = 0;
 
 		wi::graphics::Texture lightmap;
 		mutable uint32_t lightmapIterationCount = 0;
+		wi::graphics::GPUBuffer vb_ao;
+		int vb_ao_srv = -1;
 
 		XMFLOAT3 center = XMFLOAT3(0, 0, 0);
 		float radius = 0;
@@ -865,6 +878,14 @@ namespace wi::scene
 		void CompressLightmap(); // not thread safe if LIGHTMAP_BLOCK_COMPRESSION is enabled!
 
 		void Serialize(wi::Archive& archive, wi::ecs::EntitySerializer& seri);
+
+		void CreateRenderData();
+		void DeleteRenderData();
+		struct Vertex_AO
+		{
+			uint8_t value = 0;
+			static constexpr wi::graphics::Format FORMAT = wi::graphics::Format::R8_UNORM;
+		};
 	};
 
 	struct RigidBodyPhysicsComponent
@@ -1031,7 +1052,6 @@ namespace wi::scene
 		XMFLOAT4 rotation = XMFLOAT4(0, 0, 0, 1);
 		XMFLOAT3 scale = XMFLOAT3(1, 1, 1);
 		mutable int occlusionquery = -1;
-		wi::rectpacker::Rect shadow_rect = {};
 
 		wi::vector<wi::Resource> lensFlareRimTextures;
 
@@ -1125,8 +1145,7 @@ namespace wi::scene
 		int texture_rtshadow_index = -1;
 		int texture_rtdiffuse_index = -1;
 		int texture_surfelgi_index = -1;
-		int buffer_entitytiles_opaque_index = -1;
-		int buffer_entitytiles_transparent_index = -1;
+		int buffer_entitytiles_index = -1;
 		int texture_vxgi_diffuse_index = -1;
 		int texture_vxgi_specular_index = -1;
 
@@ -1277,6 +1296,7 @@ namespace wi::scene
 			EMPTY = 0,
 			PLAYING = 1 << 0,
 			LOOPED = 1 << 1,
+			ROOT_MOTION = 1 << 2
 		};
 		uint32_t _flags = LOOPED;
 		float start = 0;
@@ -1401,15 +1421,35 @@ namespace wi::scene
 		wi::vector<float> morph_weights_temp;
 		float last_update_time = 0;
 
+		// Root Motion
+		XMFLOAT3 rootTranslationOffset;
+		XMFLOAT4 rootRotationOffset;
+		wi::ecs::Entity rootMotionBone;
+
+		XMVECTOR rootPrevTranslation = XMVectorSet(-69, 420, 69, -420);
+		XMVECTOR rootPrevRotation = XMVectorSet(-69, 420, 69, -420);
+		XMVECTOR INVALID_VECTOR = XMVectorSet(-69, 420, 69, -420);
+		float prevLocTimer;
+		float prevRotTimer;
+		// Root Motion
+
 		inline bool IsPlaying() const { return _flags & PLAYING; }
 		inline bool IsLooped() const { return _flags & LOOPED; }
 		inline float GetLength() const { return end - start; }
 		inline bool IsEnded() const { return timer >= end; }
+		inline bool IsRootMotion() const { return _flags & ROOT_MOTION; }
 
 		inline void Play() { _flags |= PLAYING; }
 		inline void Pause() { _flags &= ~PLAYING; }
 		inline void Stop() { Pause(); timer = 0.0f; last_update_time = timer; }
 		inline void SetLooped(bool value = true) { if (value) { _flags |= LOOPED; } else { _flags &= ~LOOPED; } }
+
+		inline void RootMotionOn() { _flags |= ROOT_MOTION; }
+		inline void RootMotionOff() { _flags &= ~ROOT_MOTION; }
+		inline XMFLOAT3 GetRootTranslation() const { return rootTranslationOffset; }
+		inline XMFLOAT4 GetRootRotation() const { return rootRotationOffset; }
+		inline wi::ecs::Entity GetRootMotionBone() const { return rootMotionBone; }
+		inline void SetRootMotionBone(wi::ecs::Entity _rootMotionBone) { rootMotionBone = _rootMotionBone; }
 
 		void Serialize(wi::Archive& archive, wi::ecs::EntitySerializer& seri);
 	};
@@ -1890,6 +1930,9 @@ namespace wi::scene
 		float head_rotation_speed = 0.1f;
 		XMFLOAT2 eye_rotation_max = XMFLOAT2(XM_PI / 20.0f, XM_PI / 20.0f);
 		float eye_rotation_speed = 0.1f;
+
+		float ragdoll_fatness = 1.0f;
+		float ragdoll_headsize = 1.0f;
 
 		// Non-serialized attributes:
 		XMFLOAT3 lookAt = {}; // lookAt target pos, can be set by user

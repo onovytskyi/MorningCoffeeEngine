@@ -20,6 +20,7 @@
     <ClCompile Include="$(MSBuildThisFileDirectory)CameraWindow.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)ColliderWindow.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)ComponentsWindow.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)ContentBrowserWindow.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)DecalWindow.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)Editor.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)EmbeddedResources.cpp" />
@@ -126,6 +127,7 @@
     <ClCompile Include="$(MSBuildThisFileDirectory)TransformWindow.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)Translator.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)VideoWindow.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)VoxelGridWindow.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)WeatherWindow.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)xatlas.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">NotUsing</PrecompiledHeader>
@@ -145,6 +147,7 @@
     <ClInclude Include="$(MSBuildThisFileDirectory)CameraWindow.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)ColliderWindow.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)ComponentsWindow.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)ContentBrowserWindow.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)DecalWindow.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)Editor.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)EmitterWindow.h" />
@@ -187,6 +190,7 @@
     <ClInclude Include="$(MSBuildThisFileDirectory)TransformWindow.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)Translator.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)VideoWindow.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)VoxelGridWindow.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)WeatherWindow.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)xatlas.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)yumin.h" />
