@@ -1729,7 +1729,7 @@ void LoadShaders()
 									}
 									else
 									{
-										desc.dss = &depthStencils[transparency ? DSSTYPE_TRANSPARENT : DSSTYPE_DEPTHREADEQUAL];
+										desc.dss = &depthStencils[transparency ? DSSTYPE_DEPTHREAD : DSSTYPE_DEPTHREADEQUAL];
 									}
 									break;
 								case RENDERPASS_ENVMAPCAPTURE:
@@ -2094,10 +2094,6 @@ void SetUpStates()
 	dsd.back_face.stencil_fail_op = StencilOp::KEEP;
 	dsd.back_face.stencil_depth_fail_op = StencilOp::KEEP;
 	depthStencils[DSSTYPE_DEFAULT] = dsd;
-
-	dsd.depth_func = ComparisonFunc::GREATER_EQUAL;
-	depthStencils[DSSTYPE_TRANSPARENT] = dsd;
-	dsd.depth_func = ComparisonFunc::GREATER;
 
 	dsd.depth_write_mask = DepthWriteMask::ZERO;
 	depthStencils[DSSTYPE_HOLOGRAM] = dsd;
