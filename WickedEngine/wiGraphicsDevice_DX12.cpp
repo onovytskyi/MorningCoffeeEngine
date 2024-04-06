@@ -24,7 +24,10 @@
 
 #include <map>
 #include <string>
-#include <pix.h>
+
+//#define USE_PIX // Uncomment if you want pix markers in release. In debug Pix uses _DEBUG define
+#include "Utility/pix3/Include/WinPixEventRuntime/pix3.h"
+#pragma comment(lib, __FILE__"/../Utility/pix3/bin/x64/WinPixEventRuntime.lib") // TODO Move to sharpmake
 
 #include <sstream>
 #include <algorithm>
@@ -7786,7 +7789,7 @@ using namespace dx12_internal;
 		wchar_t text[128];
 		if (wi::helper::StringConvert(name, text) > 0)
 		{
-			PIXBeginEvent(commandlist.GetGraphicsCommandList(), 0xFF000000, text);
+			PIXBeginEvent(commandlist.GetGraphicsCommandList(), rand(), text);
 		}
 	}
 	void GraphicsDevice_DX12::EventEnd(CommandList cmd)
@@ -7804,7 +7807,7 @@ using namespace dx12_internal;
 		wchar_t text[128];
 		if (wi::helper::StringConvert(name, text) > 0)
 		{
-			PIXSetMarker(commandlist.GetGraphicsCommandList(), 0xFFFF0000, text);
+			PIXSetMarker(commandlist.GetGraphicsCommandList(), rand(), text);
 		}
 	}
 
