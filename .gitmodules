@@ -1,0 +1,3 @@
+[submodule "WickedEngine/Externals/Sharpmake"]
+	path = WickedEngine/Externals/Sharpmake
+	url = https://github.com/ubisoft/Sharpmake.git
