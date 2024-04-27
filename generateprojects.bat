@@ -15,7 +15,7 @@ if not exist "%SHARPMAKE_EXE%" (
     echo Found MSBuild at !MSBUILDPATH!
 
     echo Compiling Sharpmake
-    !MSBUILDPATH! D:\Development\MorningCoffeeEngine\WickedEngine\Externals\Sharpmake\Sharpmake.sln /p:Configuration=Release /p:Platform="Any CPU"
+    !MSBUILDPATH! WickedEngine\Externals\Sharpmake\Sharpmake.sln /p:Configuration=Release /p:Platform="Any CPU"
 ) 
 
 !SHARPMAKE_EXE! /sources('./Projects/MorningCoffee.sharpmake.cs')
