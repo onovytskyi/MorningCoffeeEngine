@@ -76,14 +76,6 @@
 #include "wiPathQuery.h"
 #include "wiTrailRenderer.h"
 
-#ifdef PLATFORM_WINDOWS_DESKTOP
-#pragma comment(lib,"WickedEngine_Windows.lib")
-#endif // PLATFORM_WINDOWS_DESKTOP
-
-#ifdef PLATFORM_UWP
-#pragma comment(lib,"WickedEngine_UWP.lib")
-#endif // PLATFORM_UWP
-
 #ifdef PLATFORM_XBOX
 #pragma comment(lib,"WickedEngine_XBOX.lib")
 #endif // PLATFORM_XBOX

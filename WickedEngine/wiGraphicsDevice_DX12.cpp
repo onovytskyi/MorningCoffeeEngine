@@ -26,8 +26,7 @@
 #include <string>
 
 //#define USE_PIX // Uncomment if you want pix markers in release. In debug Pix uses _DEBUG define
-#include "Utility/pix3/Include/WinPixEventRuntime/pix3.h"
-#pragma comment(lib, __FILE__"/../Utility/pix3/bin/x64/WinPixEventRuntime.lib") // TODO Move to sharpmake
+#include "pix3.h"
 
 #include <sstream>
 #include <algorithm>
